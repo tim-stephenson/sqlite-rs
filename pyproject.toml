@@ -1,0 +1,22 @@
+[project]
+name = "sqlite-rs"
+description = ""
+version = "0.1.0"
+authors = [
+    { name = "Timothy Stephenson", email = "38039215+tim-stephenson@users.noreply.github.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pyarrow",
+]
+
+
+[dependency-groups]
+dev = [
+    "marimo",
+    "sphinx",
+    "ruff",
+    "pydata-sphinx-theme",
+    "sphinx-autobuild",
+    "myst-parser",
+]
