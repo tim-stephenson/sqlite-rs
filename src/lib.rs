@@ -47,37 +47,88 @@ mod sqlite_ffi {
 mod _core {
     use super::sqlite_ffi::{self, sqlite3_stmt};
     use pyo3::conversion::IntoPyObjectExt;
-    use pyo3::exceptions::PyValueError;
+    use pyo3::exceptions::{PyTypeError, PyValueError};
     use pyo3::prelude::*;
     use std::ffi::{CStr, CString};
 
-    /// Formats the sum of two numbers as string.
-    #[pyfunction]
-    fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-        Ok((a + b).to_string())
-    }
-
     /// Run `sql` against the sqlite3* backing `connection`, and return the
     /// result rows. `connection` must be a Connection object created by
-    /// sqlite_rs's own clone of CPython's sqlite3 module -- see
-    /// `python/sqlite_rs/__init__.py`, which isinstance-checks this before
-    /// calling in. This exists to prove that the same live SQLite
-    /// connection is genuinely shared between the Python clone module and
-    /// this Rust extension (both dynamically link the same `libsqlite3`),
-    /// not just built from source-identical but independent copies.
+    /// sqlite_rs's own clone of CPython's sqlite3 module (see
+    /// `require_own_connection` below for why). This exists to prove that
+    /// the same live SQLite connection is genuinely shared between the
+    /// Python clone module and this Rust extension (both dynamically link
+    /// the same `libsqlite3`), not just built from source-identical but
+    /// independent copies.
     #[pyfunction]
-    fn query_via_shared_connection(
-        py: Python<'_>,
-        connection: Bound<'_, PyAny>,
-        sql: &str,
-    ) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+    fn query_via_rust(py: Python<'_>, connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+        run_query(py, connection_db(py, connection)?, sql)
+    }
+
+    /// Return the raw `sqlite3*` backing `connection` as a `ctypes.c_void_p`,
+    /// so it can be handed directly to an unrelated FFI caller -- e.g.
+    /// ctypes calling straight into the bundled `libsqlite3` -- and used to
+    /// operate on the exact same live connection sqlite_rs opened. Same
+    /// `connection` requirement as `query_via_rust` above.
+    #[pyfunction]
+    fn get_raw_db_ptr(py: Python<'_>, connection: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let addr = connection_db(py, connection)? as usize;
+        let c_void_p = py.import("ctypes")?.getattr("c_void_p")?;
+        Ok(c_void_p.call1((addr,))?.unbind())
+    }
+
+    /// Run `sql` against the raw `sqlite3*` at `db_ptr` (as returned by, for
+    /// instance, ctypes calling `sqlite3_open` against the bundled
+    /// `libsqlite3` directly). This is the mirror image of
+    /// `get_raw_db_ptr`: it lets an external caller's connection be driven
+    /// from the Rust side, proving the sharing works in both directions,
+    /// not just from a `Connection` object outward. Unlike the two
+    /// functions above, there's no type to check here -- an arbitrary raw
+    /// pointer is trusted as-is, per its documented contract.
+    #[pyfunction]
+    fn query_via_raw_pointer(py: Python<'_>, db_ptr: usize, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+        let db = db_ptr as *mut sqlite_ffi::sqlite3;
+        if db.is_null() {
+            return Err(PyValueError::new_err("db_ptr is null"));
+        }
+        run_query(py, db, sql)
+    }
+
+    /// `connection` must be an instance of `sqlite_rs._sqlite3.Connection`
+    /// (this project's own clone of CPython's sqlite3 module), not the
+    /// stdlib `sqlite3.Connection`: the shim below extracts the raw
+    /// `sqlite3*` by reading CPython's private Connection struct layout,
+    /// which is only guaranteed to match for connections created by this
+    /// package's own compiled clone module.
+    ///
+    /// `sqlite_rs._sqlite3` is looked up by name rather than imported at
+    /// module init time, since by the time any `#[pyfunction]` here is
+    /// actually called, `sqlite_rs` (and therefore `sqlite_rs._sqlite3`) is
+    /// necessarily already fully imported -- this module IS a submodule of
+    /// it.
+    fn require_own_connection(py: Python<'_>, connection: &Bound<'_, PyAny>) -> PyResult<()> {
+        let connection_type = py.import("sqlite_rs._sqlite3")?.getattr("Connection")?;
+        if connection.is_instance(&connection_type)? {
+            Ok(())
+        } else {
+            Err(PyTypeError::new_err(
+                "connection must be a Connection from sqlite_rs.connect() (sqlite_rs's own \
+                 sqlite3 clone), not the stdlib sqlite3 module",
+            ))
+        }
+    }
+
+    fn connection_db(py: Python<'_>, connection: Bound<'_, PyAny>) -> PyResult<*mut sqlite_ffi::sqlite3> {
+        require_own_connection(py, &connection)?;
         let db = unsafe { sqlite_ffi::sqlite_rs_get_connection_db(connection.as_ptr()) };
         if db.is_null() {
             return Err(PyValueError::new_err(
                 "connection has no underlying sqlite3* (is it closed?)",
             ));
         }
+        Ok(db)
+    }
 
+    fn run_query(py: Python<'_>, db: *mut sqlite_ffi::sqlite3, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
         let c_sql = CString::new(sql).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let mut stmt: *mut sqlite3_stmt = std::ptr::null_mut();
         let rc = unsafe {

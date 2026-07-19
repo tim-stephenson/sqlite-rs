@@ -28,6 +28,7 @@ dev = [
     "pydata-sphinx-theme",
     "sphinx-autobuild",
     "myst-parser",
+    "pytest",
 ]
 
 [tool.ruff.lint]
@@ -42,7 +43,8 @@ convention = "numpy"
 
 [tool.ruff.lint.extend-per-file-ignores]
 "docs/**/*.py" = ["INP001", "D103"]
-"docs/source/notebooks/*.py" = ["ANN001", "ANN202", "B018", "PLC0415"]
+"docs/source/notebooks/*.py" = ["ANN001", "ANN202", "B018", "PLC0415", "PLR1711"]
+"tests/**/*.py" = ["S101", "D103", "INP001"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
