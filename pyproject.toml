@@ -1,3 +1,7 @@
+[build-system]
+requires = ["maturin>=1.14.1,<2.0"]
+build-backend = "maturin"
+
 [project]
 name = "sqlite-rs"
 description = ""
@@ -8,6 +12,10 @@ authors = [
 requires-python = ">=3.10"
 dependencies = [
     "pyarrow",
+]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
 ]
 
 
@@ -20,3 +28,21 @@ dev = [
     "sphinx-autobuild",
     "myst-parser",
 ]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "D100",
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
+
+[tool.ruff.lint.extend-per-file-ignores]
+"docs/**/*.py" = ["INP001", "D103"]
+"docs/source/notebooks/*.py" = ["ANN001", "ANN202", "B018", "PLC0415"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"

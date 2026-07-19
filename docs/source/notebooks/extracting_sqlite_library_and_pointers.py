@@ -7,6 +7,7 @@ app = marimo.App(width="medium")
 @app.cell
 def _():
     import sys
+
     import marimo as mo
     import sqlite_rs
 
@@ -15,26 +16,22 @@ def _():
 
 @app.cell
 def _():
-    1+1
-    return
+    1 + 1
 
 
 @app.cell
 def _(sys):
     sys.executable
-    return
 
 
 @app.cell
 def _(sys):
     sys.platform
-    return
 
 
 @app.cell
 def _(sqlite_rs):
     sqlite_rs
-    return
 
 
 @app.cell(hide_code=True)
@@ -45,7 +42,6 @@ def _(mo):
     2-4
     ```
     """)
-    return
 
 
 @app.cell
