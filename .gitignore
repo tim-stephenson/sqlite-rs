@@ -28,6 +28,8 @@ __pycache__/
 
 # C extensions
 *.so
+*.dylib
+*.dll
 
 # Distribution / packaging
 .Python
@@ -48,6 +50,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+!vendor/cpython/MANIFEST
 
 # PyInstaller
 #   Usually these files are written by a python script from a template
