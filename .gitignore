@@ -246,5 +246,7 @@ __marimo__/
 # static marimo outputs
 docs/source/_static/marimo_html
 
-# ?
+
+# other catchall
 .DS_Store
+Cargo.lock

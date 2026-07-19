@@ -5,7 +5,6 @@ build-backend = "maturin"
 [project]
 name = "sqlite-rs"
 description = ""
-version = "0.1.0"
 authors = [
     { name = "Timothy Stephenson", email = "38039215+tim-stephenson@users.noreply.github.com" }
 ]
@@ -17,10 +16,12 @@ classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
 ]
+dynamic = ["version"]
 
 
 [dependency-groups]
 dev = [
+    "maturin",
     "marimo",
     "sphinx",
     "ruff",
@@ -46,3 +47,4 @@ convention = "numpy"
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
+module-name = "sqlite_rs._core"

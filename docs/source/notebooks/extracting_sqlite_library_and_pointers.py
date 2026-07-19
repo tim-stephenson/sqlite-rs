@@ -11,37 +11,48 @@ def _():
     import marimo as mo
     import sqlite_rs
 
-    return mo, sqlite_rs, sys
-
-
-@app.cell
-def _():
-    1 + 1
+    return sqlite_rs, sys
 
 
 @app.cell
 def _(sys):
     sys.executable
+    return
 
 
 @app.cell
 def _(sys):
     sys.platform
+    return
 
 
 @app.cell
 def _(sqlite_rs):
     sqlite_rs
+    return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ```
-    1+1
-    2-4
-    ```
-    """)
+@app.cell
+def _(sqlite_rs):
+    sqlite_rs.__dict__
+    return
+
+
+@app.cell
+def _(sqlite_rs):
+    sqlite_rs.sum_as_string(5, 15)
+    return
+
+
+@app.cell
+def _():
+    import sqlite3
+    print(sqlite3.sqlite_version)  # version of SQLite compiled in
+
+    # Find the actual shared library file
+    import _sqlite3
+    print(_sqlite3.__file__)
+    return
 
 
 @app.cell
