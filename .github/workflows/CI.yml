@@ -53,15 +53,25 @@ jobs:
           - runner: ubuntu-22.04
             target: aarch64
             manylinux: "2_28"
+          # s390x/ppc64le/armv7: PyPy doesn't publish official builds for these
+          # architectures at all (only x86/x86_64/aarch64), but --find-interpreter
+          # still discovers the (non-functional, for this arch) PyPy directory
+          # under /opt/python and tries to build for it anyway, failing the whole
+          # job. skip_pypy removes that directory before maturin looks, so
+          # discovery just doesn't find it -- no need to enumerate which CPython
+          # versions to build for instead.
           - runner: ubuntu-22.04
             target: s390x
             manylinux: "2_28"
+            skip_pypy: true
           - runner: ubuntu-22.04
             target: ppc64le
             manylinux: "2_28"
+            skip_pypy: true
           - runner: ubuntu-22.04
             target: armv7
             manylinux: "2_28"
+            skip_pypy: true
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -83,6 +93,7 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
+          before-script-linux: ${{ matrix.platform.skip_pypy && 'rm -rf /opt/python/pp*' || '' }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
