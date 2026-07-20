@@ -85,9 +85,17 @@ jobs:
           # exists for any older manylinux_2_* tag). --find-interpreter to start,
           # matching how every other *-cross target here was first verified
           # empirically before pinning explicit -i lists where needed.
+          #
+          # Unlike aarch64/s390x/ppc64le/armv7, `manylinux: "2_39"` alone picked
+          # the *native* quay.io/pypa/manylinux_2_39_riscv64 image instead of the
+          # *-cross one -- maturin-action's target-to-cross-image auto-mapping
+          # apparently doesn't cover riscv64 yet, and running a genuine riscv64
+          # container with no QEMU registered in this job fails immediately
+          # ("exec format error"). Point at the -cross image explicitly instead.
           - runner: ubuntu-22.04
             target: riscv64
             manylinux: "2_39"
+            container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
             args: --release --out dist --find-interpreter
     steps:
       - uses: actions/checkout@v6
@@ -110,6 +118,7 @@ jobs:
           args: ${{ matrix.platform.args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
+          container: ${{ matrix.platform.container }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
