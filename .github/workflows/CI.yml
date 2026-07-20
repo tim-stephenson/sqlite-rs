@@ -62,28 +62,29 @@ jobs:
             target: x86
             manylinux: auto
             args: --release --out dist --find-interpreter --auditwheel=warn
-          # aarch64/s390x/ppc64le/armv7: manylinux2014-cross's bundled cross-gcc
-          # is too old to ship stdatomic.h, which CPython 3.13+'s mimalloc
-          # allocator requires -- manylinux_2_28-cross bundles a newer one that
-          # has it (verified against ghcr.io/rust-cross/manylinux_2_28-cross's
-          # actual published tags -- it covers armv7 even though PyPA doesn't
-          # publish a *native* manylinux_2_28_armv7l image).
-          - runner: ubuntu-22.04
-            target: aarch64
-            manylinux: "2_28"
-            args: --release --out dist --find-interpreter --auditwheel=warn
-          # s390x/ppc64le/armv7: maturin's --find-interpreter doesn't actually
-          # scan these *-cross images' filesystem for what interpreters are
-          # really present -- it optimistically assumes a fixed set of
-          # "commonly available" tags for the target triple and tries all of
-          # them regardless, so it always attempts (and fails) a build for
-          # whichever aren't really there instead of skipping them. What's
-          # empirically confirmed present (by which CPython/CPython+free-
-          # threaded/PyPy builds actually succeeded here) varies per
-          # architecture -- PyPy isn't published upstream at all for these
-          # three, and free-threaded 3.14 is missing for s390x/armv7 too --
-          # so each needs its own explicit -i list of proven-working
-          # interpreters instead of --find-interpreter's unverified guess.
+          # s390x/ppc64le/armv7: manylinux2014-cross's bundled cross-gcc is too
+          # old to ship stdatomic.h, which CPython 3.13+'s mimalloc allocator
+          # requires -- manylinux_2_28-cross bundles a newer one that has it
+          # (verified against ghcr.io/rust-cross/manylinux_2_28-cross's actual
+          # published tags -- it covers armv7 even though PyPA doesn't publish
+          # a *native* manylinux_2_28_armv7l image). aarch64 used to be built
+          # here too via manylinux_2_28-cross, but ubuntu-24.04-arm (a genuine
+          # ARM64 GitHub-hosted runner) lets it build and test natively
+          # instead -- no cross-gcc, no QEMU -- see the linux-aarch64 job
+          # below.
+          #
+          # maturin's --find-interpreter doesn't actually scan these *-cross
+          # images' filesystem for what interpreters are really present -- it
+          # optimistically assumes a fixed set of "commonly available" tags
+          # for the target triple and tries all of them regardless, so it
+          # always attempts (and fails) a build for whichever aren't really
+          # there instead of skipping them. What's empirically confirmed
+          # present (by which CPython/CPython+free-threaded/PyPy builds
+          # actually succeeded here) varies per architecture -- PyPy isn't
+          # published upstream at all for these three, and free-threaded 3.14
+          # is missing for s390x/armv7 too -- so each needs its own explicit
+          # -i list of proven-working interpreters instead of
+          # --find-interpreter's unverified guess.
           - runner: ubuntu-22.04
             target: s390x
             manylinux: "2_28"
@@ -159,23 +160,68 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
           container: ${{ matrix.platform.container }}
-      # Only x86_64/x86 run on this same CPU natively -- aarch64/s390x/
-      # ppc64le/armv7/riscv64 are built via cross-gcc for a CPU this runner
-      # can't execute at all, so testing them here would need QEMU (the
-      # slowness this whole matrix was reworked to avoid).
+      # Only x86_64 actually gets tested: s390x/ppc64le/armv7/riscv64 are
+      # built via cross-gcc for a CPU this runner can't execute at all
+      # (testing them would need QEMU, the slowness this whole matrix was
+      # reworked to avoid), and x86 (i686), despite running fine on this
+      # same x86_64 CPU, has no interpreter to install/run it against at all
+      # -- unlike windows's actions/setup-python (which supports
+      # architecture: x86), Linux runners have no 32-bit Python available
+      # (confirmed in CI: "sqlite-rs (v0.1.0) has no wheels with a matching
+      # platform tag" against the 64-bit interpreter actions/setup-python
+      # actually provisions here). aarch64 moved to its own job
+      # (linux-aarch64) below, where it's tested natively.
       - name: Install built wheel
-        if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
+        if: matrix.platform.target == 'x86_64'
         run: uv pip install --system --find-links dist sqlite-rs
       - name: Install test dependencies
-        if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
+        if: matrix.platform.target == 'x86_64'
         run: uv pip install --system --group test
       - name: Run tests
-        if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
+        if: matrix.platform.target == 'x86_64'
         run: pytest tests/
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-${{ matrix.platform.target }}
+          path: dist
+
+  linux-aarch64:
+    # ubuntu-24.04-arm is a genuine ARM64 GitHub-hosted runner (GA and free
+    # for public repos), so unlike the linux job's s390x/ppc64le/armv7/
+    # riscv64 legs -- which have no native runner option and must cross-
+    # compile via manylinux-cross images and skip testing entirely -- aarch64
+    # can build against the real, native quay.io/pypa/manylinux_2_28_aarch64
+    # image (maturin-action picks it automatically since manylinux: is set
+    # and the runner's own arch already matches the target) and then actually
+    # install and test the resulting wheel, no QEMU or cross-gcc involved.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - uses: astral-sh/setup-uv@v7
+      # --auditwheel=warn: see the matching comment in the linux job -- same
+      # risk of maturin's manylinux auto-repair relocating libsqlite3 into a
+      # private copy for _core alone, regardless of native vs cross build.
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64
+          args: --release --out dist --find-interpreter --auditwheel=warn
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: "2_28"
+      - name: Install built wheel
+        run: uv pip install --system --find-links dist sqlite-rs
+      - name: Install test dependencies
+        run: uv pip install --system --group test
+      - name: Run tests
+        run: pytest tests/
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-linux-aarch64
           path: dist
 
   musllinux:
@@ -350,7 +396,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, musllinux, windows, macos, sdist]
+    needs: [linux, linux-aarch64, musllinux, windows, macos, sdist]
     permissions:
       # Use to sign the release artifacts
       id-token: write

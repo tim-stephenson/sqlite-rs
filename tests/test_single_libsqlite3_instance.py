@@ -28,13 +28,17 @@ import sqlite_rs
 import sqlite_rs.sqlite3
 
 # This project's own bundled-library naming (build.rs's shared_lib_name():
-# libsqlite3.so / libsqlite3.dylib / sqlite3.dll), plus any hash-suffixed
-# rename a repair tool might apply (e.g. delocate's libsqlite3-<hash>.dylib).
-# Deliberately does *not* match a versioned system SONAME like
-# libsqlite3.so.0 -- a distinct, legitimate library (e.g. behind the stdlib
-# sqlite3 module, imported elsewhere in this same test suite) that must not
-# be confused with a duplicate of our own.
-_BUNDLED_NAME_PATTERN = re.compile(r"^(lib)?sqlite3(-[0-9a-fA-F]+)?\.(so|dylib|dll)$")
+# libsqlite3.so / libsqlite3.dylib on macOS/Linux, sqlite_rs_libsqlite3.dll on
+# Windows -- project-prefixed there specifically to avoid colliding with
+# CPython's own bundled sqlite3.dll, see that function's doc comment), plus
+# any hash-suffixed rename a repair tool might apply (e.g. delocate's
+# libsqlite3-<hash>.dylib). Deliberately does *not* match a versioned system
+# SONAME like libsqlite3.so.0 -- a distinct, legitimate library (e.g. behind
+# the stdlib sqlite3 module, imported elsewhere in this same test suite) that
+# must not be confused with a duplicate of our own.
+_BUNDLED_NAME_PATTERN = re.compile(
+    r"^(sqlite_rs_lib|lib)?sqlite3(-[0-9a-fA-F]+)?\.(so|dylib|dll)$"
+)
 
 # /proc/self/maps lines: address perms offset dev inode [pathname].
 _PROC_MAPS_FIELD_COUNT = 6
