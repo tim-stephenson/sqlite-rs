@@ -48,7 +48,7 @@ root_doc = "index"
 
 
 # marimo notebook html outputs
-def build_marimo_notebooks(app: Sphinx, config: Config) -> None:
+def build_marimo_notebooks(app: Sphinx, config: Config) -> None:  # pyright: ignore[reportUnusedParameter]
     """Automatically compiles modified Marimo notebooks to static HTML using pathlib."""
     # Find directories relative to this conf.py file
     conf_dir = Path(__file__).resolve().parent

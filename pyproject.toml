@@ -59,12 +59,11 @@ module-name = "sqlite_rs._core"
 
 [tool.basedpyright]
 exclude = [
-    # basedpyright's built-in defaults (dot-dirs, __pycache__, venvPath) --
-    # listing our own "exclude" below replaces rather than extends them.
-    ".venv",
+    "**/node_modules", 
     "**/__pycache__",
+    "**/.*",
     "target",
     "vendor",
-    # build.rs-materialized copy of vendor/cpython/Lib/sqlite3/.
     "python/sqlite_rs/sqlite3",
+    "docs/source/notebooks",
 ]

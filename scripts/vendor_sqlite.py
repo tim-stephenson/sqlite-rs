@@ -30,16 +30,15 @@ VERSION_FILE = VENDOR_DIR / "VERSION"
 WANTED_FILES = {"sqlite3.c", "sqlite3.h", "sqlite3ext.h"}
 
 PRODUCT_LINE = re.compile(
-    r"^PRODUCT,(?P<version>[^,]+),(?P<url>[^,]*sqlite-amalgamation-[^,]+\.zip),"
-    r"(?P<size>\d+),(?P<sha3>[0-9a-f]{64})$",
+    r"^PRODUCT,(?P<version>[^,]+),(?P<url>[^,]*sqlite-amalgamation-[^,]+\.zip),(?P<size>\d+),(?P<sha3>[0-9a-f]{64})$",
     re.MULTILINE,
 )
 
 
 def find_amalgamation(version: str) -> tuple[str, int, str]:
     """Look up (relative_url, size_bytes, sha3_256_hex) for `version`'s amalgamation zip."""  # noqa: E501
-    with urllib.request.urlopen(DOWNLOAD_PAGE) as resp:  # noqa: S310
-        page = resp.read().decode("utf-8")
+    with urllib.request.urlopen(DOWNLOAD_PAGE) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+        page: str = resp.read().decode("utf-8")  # pyright: ignore[reportAny]
 
     for match in PRODUCT_LINE.finditer(page):
         if match["version"] == version:
@@ -54,8 +53,8 @@ def fetch_and_verify(
 ) -> bytes:
     """Download the amalgamation zip and verify its size and SHA3-256 before returning it."""  # noqa: E501
     url = f"https://www.sqlite.org/{relative_url}"
-    with urllib.request.urlopen(url) as resp:  # noqa: S310
-        data = resp.read()
+    with urllib.request.urlopen(url) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+        data: bytes = resp.read()  # pyright: ignore[reportAny]
 
     if len(data) != expected_size:
         msg = f"downloaded {len(data)} bytes, expected {expected_size} from {url}"
@@ -76,7 +75,7 @@ def unpack(data: bytes) -> None:
         for member in zf.namelist():
             name = Path(member).name
             if name in WANTED_FILES:
-                (VENDOR_DIR / name).write_bytes(zf.read(member))
+                _ = (VENDOR_DIR / name).write_bytes(zf.read(member))
 
 
 def main() -> None:
@@ -88,7 +87,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    version = args.version
+    version = args.version  # pyright: ignore[reportAny]
     if version is None:
         if not VERSION_FILE.exists():
             sys.exit("no version given and vendor/sqlite/VERSION does not exist yet")
@@ -98,7 +97,7 @@ def main() -> None:
     print(f"vendoring SQLite {version} from https://www.sqlite.org/{relative_url}")
     data = fetch_and_verify(relative_url, size, sha3)
     unpack(data)
-    VERSION_FILE.write_text(version + "\n")
+    _ = VERSION_FILE.write_text(version + "\n")
     print(f"wrote {VENDOR_DIR}")
 
 

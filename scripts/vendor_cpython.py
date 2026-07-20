@@ -56,8 +56,8 @@ def api_get(url: str) -> object:
     request = urllib.request.Request(  # noqa: S310
         url, headers={"Accept": "application/vnd.github+json"}
     )
-    with urllib.request.urlopen(request) as resp:  # noqa: S310
-        return json.loads(resp.read())
+    with urllib.request.urlopen(request) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+        return json.loads(resp.read())  # pyright: ignore[reportAny]
 
 
 def resolve_commit(tag: str) -> str:
@@ -93,8 +93,8 @@ def download_tree(ref: str, subpath: str, dest: Path, keep: set[str] | None) -> 
         elif entry["type"] == "file":
             if keep is not None and entry["name"] not in keep:
                 continue
-            with urllib.request.urlopen(entry["download_url"]) as resp:  # noqa: S310
-                (dest / entry["name"]).write_bytes(resp.read())
+            with urllib.request.urlopen(entry["download_url"]) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+                _ = (dest / entry["name"]).write_bytes(resp.read())  # pyright: ignore[reportAny]
         else:
             msg = f"unexpected entry type {entry['type']!r} for {entry['path']}"
             raise SystemExit(msg)
@@ -102,14 +102,14 @@ def download_tree(ref: str, subpath: str, dest: Path, keep: set[str] | None) -> 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    _ = parser.add_argument(
         "version",
         nargs="?",
         help="CPython version to vendor, e.g. 3.14.3. Defaults to the version in VERSION.",  # noqa: E501
     )
     args = parser.parse_args()
 
-    version = args.version
+    version = args.version  # pyright: ignore[reportAny]
     if version is None:
         if not VERSION_FILE.exists():
             sys.exit("no version given and vendor/cpython/VERSION does not exist yet")
@@ -126,11 +126,9 @@ def main() -> None:
         download_tree(commit, source_subpath, dest_root, keep)
         print(f"wrote {dest_root}")
 
-    VERSION_FILE.write_text(version + "\n")
-    MANIFEST_FILE.write_text(
-        f"source: https://github.com/{REPO}\n"
-        f"tag: {tag}\n"
-        f"commit: {commit}\n"
+    _ = VERSION_FILE.write_text(version + "\n")
+    _ = MANIFEST_FILE.write_text(
+        f"source: https://github.com/{REPO}\ntag: {tag}\ncommit: {commit}\n"
         + "".join(
             f"path: {source_subpath}"
             + (f" (files: {', '.join(sorted(keep))})" if keep else "")

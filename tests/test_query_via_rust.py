@@ -95,10 +95,12 @@ def _ctypes_exec_rows(
     def collect_row(
         _ctx: object, n: int, values: ctypes.Array[ctypes.c_char_p], _columns: object
     ) -> int:
-        rows.append(tuple(values[i].decode() for i in range(n)))
+        rows.append(tuple(values[i].decode() for i in range(n)))  # pyright: ignore[reportAny]
         return 0
 
-    rc = lib.sqlite3_exec(db, sql.encode(), _EXEC_CALLBACK_T(collect_row), None, None)
+    rc: int = lib.sqlite3_exec(  # pyright: ignore[reportAny]
+        db, sql.encode(), _EXEC_CALLBACK_T(collect_row), None, None
+    )
     assert rc == 0
     return rows
 
@@ -113,13 +115,13 @@ def test_bundled_libsqlite3_is_directly_usable_via_ctypes(
     library, not an implementation detail baked into the other two.
     """
     clone_version = sqlite_rs.sqlite3.sqlite_version
-    assert libsqlite3.sqlite3_libversion().decode() == clone_version
+    assert libsqlite3.sqlite3_libversion().decode() == clone_version  # pyright: ignore[reportAny]
 
     # Write a file-backed database via sqlite_rs's own sqlite3 clone module...
     db_path = tmp_path / "interop.db"
     conn = sqlite_rs.sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
-    conn.execute("INSERT INTO t VALUES (1, 'hello')")
+    _ = conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
+    _ = conn.execute("INSERT INTO t VALUES (1, 'hello')")
     conn.commit()
     conn.close()
 
@@ -147,8 +149,8 @@ def test_connection_opened_via_ctypes_is_usable_via_the_sqlite_rs_api(
     db_ptr = db.value
     assert db_ptr is not None
 
-    sqlite_rs.query_via_raw_pointer(db_ptr, "CREATE TABLE t (a INTEGER)")
-    sqlite_rs.query_via_raw_pointer(db_ptr, "INSERT INTO t VALUES (7)")
+    _ = sqlite_rs.query_via_raw_pointer(db_ptr, "CREATE TABLE t (a INTEGER)")
+    _ = sqlite_rs.query_via_raw_pointer(db_ptr, "INSERT INTO t VALUES (7)")
 
     # Read back purely through ctypes on the SAME connection -- confirming the
     # writes Rust made landed on the exact connection ctypes opened, not a copy.
@@ -164,8 +166,8 @@ def test_sqlite_rs_connection_is_usable_via_ctypes(libsqlite3: ctypes.CDLL) -> N
     pointer any FFI caller can act on, not just sqlite_rs's own Rust extension.
     """
     conn = sqlite_rs.sqlite3.connect(":memory:")
-    conn.execute("CREATE TABLE t (a INTEGER)")
-    conn.execute("INSERT INTO t VALUES (13)")
+    _ = conn.execute("CREATE TABLE t (a INTEGER)")
+    _ = conn.execute("INSERT INTO t VALUES (13)")
     conn.commit()
 
     db = sqlite_rs.get_raw_db_ptr(conn)
@@ -175,7 +177,7 @@ def test_sqlite_rs_connection_is_usable_via_ctypes(libsqlite3: ctypes.CDLL) -> N
     # though the C API itself accepts a NULL callback.)
     no_callback = _EXEC_CALLBACK_T()
     insert_sql = b"INSERT INTO t VALUES (14)"
-    rc = libsqlite3.sqlite3_exec(db, insert_sql, no_callback, None, None)
+    rc = libsqlite3.sqlite3_exec(db, insert_sql, no_callback, None, None)  # pyright: ignore[reportAny]
     assert rc == 0
 
     # ...then confirm it's visible back through the Python clone module,

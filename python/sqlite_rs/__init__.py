@@ -20,7 +20,11 @@ without serializing/reopening:
 import sys
 from pathlib import Path
 
-from sqlite_rs._core import get_raw_db_ptr, query_via_raw_pointer, query_via_rust
+from sqlite_rs._core import (
+    get_raw_db_ptr,  # pyright: ignore[reportUnknownVariableType]
+    query_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
+    query_via_rust,  # pyright: ignore[reportUnknownVariableType]
+)
 
 _LIBSQLITE3_NAMES = {"darwin": "libsqlite3.dylib", "win32": "sqlite3.dll"}
 

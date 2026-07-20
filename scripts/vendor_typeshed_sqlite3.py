@@ -27,7 +27,7 @@ import shutil
 from importlib.metadata import version
 from pathlib import Path
 
-import basedpyright
+import basedpyright  # pyright: ignore[reportMissingTypeStubs]
 
 TYPESHED_STDLIB = (
     Path(basedpyright.__file__).parent / "dist" / "typeshed-fallback" / "stdlib"
@@ -52,13 +52,14 @@ def main() -> None:
     for relative_path in FILES:
         dest = DEST_STDLIB / relative_path
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(TYPESHED_STDLIB / relative_path, dest)
+        _ = shutil.copyfile(TYPESHED_STDLIB / relative_path, dest)
         print(f"wrote {dest}")
 
-    MANIFEST_FILE.write_text(
-        f"source: basedpyright=={version('basedpyright')}\n"
-        f"typeshed commit: {commit}\n"
-        f"files: {', '.join(FILES)}\n",
+    _ = MANIFEST_FILE.write_text(
+        f"""source: basedpyright=={version("basedpyright")}
+typeshed commit: {commit}
+files: {", ".join(FILES)}
+""",
     )
     print(f"wrote {MANIFEST_FILE}")
 
