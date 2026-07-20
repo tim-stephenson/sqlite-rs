@@ -83,6 +83,23 @@ fn try_python_version(python: &Path) -> Option<String> {
     String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
 }
 
+/// A target interpreter located directly on disk via the manylinux/musllinux
+/// `/opt/python/<tag>/` layout (see `find_cross_python_executable`), possibly
+/// not executable at all (a genuine foreign-architecture binary with no
+/// QEMU/binfmt registered).
+struct CrossPython {
+    executable: PathBuf,
+    /// Basename of `<prefix>/include/<include_name>`. Does *not* always equal
+    /// `executable`'s own filename: manylinux/musllinux images expose PyPy's
+    /// binary as a generically-named `bin/python` (confirmed from an actual
+    /// build log: `PyPy 3.11 at /opt/python/pp311-pypy311_pp73/bin/python`),
+    /// but PyPy's own portable-build convention still installs its headers
+    /// under the implementation-specific `include/pypy3.11/`, matching
+    /// CPython's `include/python3.11/` pattern -- just keyed off "pypy" +
+    /// version rather than the generic executable name.
+    include_name: String,
+}
+
 /// Locate the target interpreter directly on disk when `pyo3_build_config`
 /// has no runnable `executable()` for it -- i.e. when cross compiling, which
 /// per PyO3/maturin's `PythonInterpreter::runnable` doc means "the target
@@ -94,42 +111,41 @@ fn try_python_version(python: &Path) -> Option<String> {
 /// Python's headers while compiling with a musl cross-compiler.
 ///
 /// manylinux/musllinux Docker images install every supported target
-/// interpreter under `/opt/python` (CPython, e.g. `cp310-cp310/`) and
-/// `/opt/pypy` (PyPy, e.g. `pp311-pypy311_pp73/`), so locate the one
-/// matching pyo3_build_config's resolved target version/implementation.
-/// Confirm it actually reports that version when it *can* be executed (e.g.
-/// same-architecture cross builds, or foreign ones running under QEMU) --
-/// but when a candidate can't be executed at all (a genuine foreign-arch
-/// binary with no emulation registered, e.g. cross-compiling from a fast
-/// native `*-cross` image), trust the directory-naming convention itself
-/// rather than treat "can't execute" as "wrong version". That convention is
-/// already exact enough on its own: `dir_prefix` encodes the full version
-/// tag (e.g. "cp311-cp311"), so a matching directory can't belong to a
-/// different interpreter version.
-fn find_cross_python_executable() -> Option<PathBuf> {
+/// interpreter -- CPython (e.g. `cp310-cp310/`) *and* PyPy (e.g.
+/// `pp311-pypy311_pp73/`) alike -- under the same `/opt/python` root; PyPy
+/// does not get a separate `/opt/pypy` (an earlier, unverified assumption
+/// here that never actually got exercised, since native builds never call
+/// this function at all). Locate the one matching pyo3_build_config's
+/// resolved target version/implementation. Confirm it actually reports that
+/// version when it *can* be executed (e.g. same-architecture cross builds, or
+/// foreign ones running under QEMU) -- but when a candidate can't be
+/// executed at all (a genuine foreign-arch binary with no emulation
+/// registered, e.g. cross-compiling from a fast native `*-cross` image),
+/// trust the directory-naming convention itself rather than treat "can't
+/// execute" as "wrong version". That convention is already exact enough on
+/// its own: `dir_prefix` encodes the full version tag (e.g. "cp311-cp311"),
+/// so a matching directory can't belong to a different interpreter version.
+fn find_cross_python_executable() -> Option<CrossPython> {
     let abi = pyo3_build_config::get().target_abi();
     let version = abi.version();
     let is_pypy = matches!(abi.implementation(), pyo3_build_config::PythonImplementation::PyPy);
     let threaded = abi.kind().is_free_threaded();
 
-    let (root, dir_prefix, exe_name) = if is_pypy {
+    let (dir_prefix, exe_name, include_name) = if is_pypy {
         (
-            "/opt/pypy",
             format!("pp{}{}-", version.major, version.minor),
+            "python".to_string(),
             format!("pypy{}.{}", version.major, version.minor),
         )
     } else {
         let tag = format!("cp{}{}", version.major, version.minor);
         let suffix = if threaded { "t" } else { "" };
-        (
-            "/opt/python",
-            format!("{tag}-{tag}{suffix}"),
-            format!("python{}.{}{suffix}", version.major, version.minor),
-        )
+        let name = format!("python{}.{}{suffix}", version.major, version.minor);
+        (format!("{tag}-{tag}{suffix}"), name.clone(), name)
     };
 
     let expected_version = format!("{}.{}", version.major, version.minor);
-    let entries = fs::read_dir(root).ok()?;
+    let entries = fs::read_dir("/opt/python").ok()?;
     for entry in entries.filter_map(|e| e.ok()) {
         if !entry.file_name().to_string_lossy().starts_with(&dir_prefix) {
             continue;
@@ -138,10 +154,11 @@ fn find_cross_python_executable() -> Option<PathBuf> {
         if !candidate.is_file() {
             continue;
         }
+        let found = |executable| CrossPython { executable, include_name: include_name.clone() };
         match try_python_version(&candidate) {
-            Some(v) if v == expected_version => return Some(candidate),
+            Some(v) if v == expected_version => return Some(found(candidate)),
             Some(_) => continue,
-            None => return Some(candidate),
+            None => return Some(found(candidate)),
         }
     }
     None
@@ -160,7 +177,7 @@ enum PythonSource {
     /// -- may be a genuine foreign-architecture binary with no QEMU/binfmt
     /// registered. Its `sysconfig` data must be derived from the fixed
     /// layout instead of executed.
-    CrossFound(PathBuf),
+    CrossFound(CrossPython),
 }
 
 /// The target Python interpreter that pyo3 itself is building against, so
@@ -170,8 +187,8 @@ fn resolve_python() -> PythonSource {
     if let Some(exe) = pyo3_build_config::get().executable() {
         return PythonSource::Runnable(exe.to_owned());
     }
-    if let Some(path) = find_cross_python_executable() {
-        return PythonSource::CrossFound(path);
+    if let Some(cross) = find_cross_python_executable() {
+        return PythonSource::CrossFound(cross);
     }
     if let Ok(exe) = env::var("PYO3_PYTHON") {
         return PythonSource::Runnable(exe);
@@ -181,23 +198,22 @@ fn resolve_python() -> PythonSource {
 
 /// `sysconfig.get_path('include')` for `python`, without executing anything
 /// for a `CrossFound` interpreter that may not be executable at all: CPython
-/// (and PyPy, which mirrors it for C-extension compatibility) always installs
-/// headers at `<prefix>/include/<exe_name>` under the POSIX sysconfig scheme
-/// (e.g. `bin/python3.11` <-> `include/python3.11/`, `bin/python3.13t` <->
-/// `include/python3.13t/`) -- the exact same naming `find_cross_python_executable`
-/// already trusts to build `exe_name` in the first place.
+/// and PyPy both always install headers at `<prefix>/include/<include_name>`
+/// under the POSIX sysconfig scheme (e.g. `python3.11` <-> `include/python3.11/`,
+/// `python3.13t` <-> `include/python3.13t/`, PyPy's `pypy3.11` <->
+/// `include/pypy3.11/`).
 fn include_dir(python: &PythonSource) -> PathBuf {
     match python {
         PythonSource::Runnable(exe) => {
             PathBuf::from(python_query(exe, "import sysconfig; print(sysconfig.get_path('include'))"))
         }
-        PythonSource::CrossFound(path) => {
-            let exe_name = path.file_name().unwrap_or_else(|| panic!("no filename in {}", path.display()));
-            let prefix = path
+        PythonSource::CrossFound(cross) => {
+            let prefix = cross
+                .executable
                 .parent() // .../bin
                 .and_then(Path::parent) // .../<tag>
-                .unwrap_or_else(|| panic!("unexpected cross python path layout: {}", path.display()));
-            prefix.join("include").join(exe_name)
+                .unwrap_or_else(|| panic!("unexpected cross python path layout: {}", cross.executable.display()));
+            prefix.join("include").join(&cross.include_name)
         }
     }
 }
