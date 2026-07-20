@@ -285,6 +285,20 @@ fn main() {
     println!("cargo:rerun-if-changed={}", vendor_lib_sqlite3_dir.display());
     println!("cargo:rerun-if-changed={}", vendor_typeshed_dir.display());
     println!("cargo:rerun-if-changed={}", native_dir.display());
+    // Once any explicit rerun-if-changed is emitted, Cargo stops watching the
+    // whole package and only reruns build.rs when one of these listed paths'
+    // mtime changes -- it has no notion of "did my own outputs disappear".
+    // `maturin develop` deletes the previous editable install (including
+    // everything build.rs wrote into python/sqlite_rs/) before reinstalling;
+    // if none of the paths above changed since the last build, Cargo would
+    // otherwise skip rerunning build.rs and leave those files missing. A
+    // missing rerun-if-changed target always counts as "changed", so listing
+    // a couple of build.rs's own key outputs here makes it self-healing.
+    println!(
+        "cargo:rerun-if-changed={}",
+        python_pkg_dir.join(shared_lib_name("sqlite3")).display()
+    );
+    println!("cargo:rerun-if-changed={}", sqlite3_pkg_dir.join("__init__.py").display());
 
     fs::create_dir_all(&sqlite3_pkg_dir)
         .unwrap_or_else(|e| panic!("failed to create {}: {e}", sqlite3_pkg_dir.display()));
