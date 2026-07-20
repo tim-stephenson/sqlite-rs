@@ -31,7 +31,7 @@ if sys.platform == "win32":
     # directory added explicitly to find libsqlite3's renamed sqlite3.dll;
     # _core (same directory) doesn't strictly need it but this is harmless
     # defense-in-depth for it too. Must run before any native import below.
-    os.add_dll_directory(str(Path(__file__).parent))
+    _ = os.add_dll_directory(str(Path(__file__).parent))
 
 from sqlite_rs._core import (
     get_raw_db_ptr,  # pyright: ignore[reportUnknownVariableType]

@@ -531,6 +531,18 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
         // which ships verbatim in the wheel and must only contain runtime
         // artifacts) -- add it as a second search path.
         println!("cargo:rustc-link-search=native={}", cargo_out_dir().display());
+        // sqlite_rs_shim.c #includes Python.h (via sqlite_rs_shim.h), and
+        // CPython's own Windows headers embed an automatic
+        // `#pragma comment(lib, "pythonXY.lib")` directive into any object
+        // file that includes them -- independent of PyO3's raw-dylib
+        // mechanism, which only covers PyO3's own Rust-side `#[link(...)]`
+        // declarations, not this plain C object file's embedded linker
+        // directive. Cargo's link of _core needs to be able to find that
+        // pythonXY.lib to resolve it, via the same pyo3_build_config
+        // mechanism used in build_sqlite_clone_module.
+        if let Some(python_lib_dir) = pyo3_build_config::get().lib_dir() {
+            println!("cargo:rustc-link-search=native={python_lib_dir}");
+        }
     }
     println!("cargo:rustc-link-lib=dylib=sqlite3");
     match target_os().as_str() {
