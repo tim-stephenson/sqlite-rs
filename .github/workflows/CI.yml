@@ -57,11 +57,11 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             manylinux: auto
-            args: --release --out dist --find-interpreter --auditwheel=skip
+            args: --release --out dist --find-interpreter --auditwheel=warn
           - runner: ubuntu-22.04
             target: x86
             manylinux: auto
-            args: --release --out dist --find-interpreter --auditwheel=skip
+            args: --release --out dist --find-interpreter --auditwheel=warn
           # aarch64/s390x/ppc64le/armv7: manylinux2014-cross's bundled cross-gcc
           # is too old to ship stdatomic.h, which CPython 3.13+'s mimalloc
           # allocator requires -- manylinux_2_28-cross bundles a newer one that
@@ -71,7 +71,7 @@ jobs:
           - runner: ubuntu-22.04
             target: aarch64
             manylinux: "2_28"
-            args: --release --out dist --find-interpreter --auditwheel=skip
+            args: --release --out dist --find-interpreter --auditwheel=warn
           # s390x/ppc64le/armv7: maturin's --find-interpreter doesn't actually
           # scan these *-cross images' filesystem for what interpreters are
           # really present -- it optimistically assumes a fixed set of
@@ -87,15 +87,15 @@ jobs:
           - runner: ubuntu-22.04
             target: s390x
             manylinux: "2_28"
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 --auditwheel=skip
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 --auditwheel=warn
           - runner: ubuntu-22.04
             target: ppc64le
             manylinux: "2_28"
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t --auditwheel=skip
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t --auditwheel=warn
           - runner: ubuntu-22.04
             target: armv7
             manylinux: "2_28"
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 --auditwheel=skip
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 --auditwheel=warn
           # riscv64 needs glibc new enough to have riscv64 support at all -- PyPA's
           # oldest riscv64 baseline is manylinux_2_39 (verified: no PyPA image
           # exists for any older manylinux_2_* tag).
@@ -115,7 +115,7 @@ jobs:
             target: riscv64
             manylinux: "2_39"
             container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t --auditwheel=skip
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t --auditwheel=warn
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -132,18 +132,25 @@ jobs:
       # (possibly foreign-architecture, since this image never runs under
       # QEMU) interpreter, so no target Python needs to actually run.
       #
-      # --auditwheel=skip everywhere here: `manylinux:` being set at all makes
-      # maturin auto-repair for compliance, which detects _core's dependency
-      # on libsqlite3 and copies/renames it into a private sqlite_rs.libs/
-      # directory just for _core's own use -- while sqlite_rs.sqlite3._sqlite3
-      # (a plain C extension build.rs links directly, outside maturin's own
-      # crate-tracking) and LIBSQLITE3_PATH still expect the original,
-      # pyproject.toml-force-included copy. That leaves two independently-
-      # loaded copies of SQLite in one process, which segfaults the moment a
-      # raw sqlite3* crosses between them (query_via_rust/get_raw_db_ptr) --
-      # confirmed by CI (linux x86_64 passed every test except one, which
-      # crashed with "Fatal Python error: Segmentation fault", right after
-      # this repair step's own log showed it relocating libsqlite3.so).
+      # --auditwheel=warn everywhere here: `manylinux:` being set at all makes
+      # maturin auto-*repair* for compliance by default, which detects
+      # _core's dependency on libsqlite3 and copies/renames it into a private
+      # sqlite_rs.libs/ directory just for _core's own use -- while
+      # sqlite_rs.sqlite3._sqlite3 (a plain C extension build.rs links
+      # directly, outside maturin's own crate-tracking) and LIBSQLITE3_PATH
+      # still expect the original, pyproject.toml-force-included copy. That
+      # leaves two independently-loaded copies of SQLite in one process,
+      # which segfaults the moment a raw sqlite3* crosses between them
+      # (query_via_rust/get_raw_db_ptr) -- confirmed by CI (linux x86_64
+      # passed every test except one, which crashed with "Fatal Python
+      # error: Segmentation fault", right after this repair step's own log
+      # showed it relocating libsqlite3.so). `--auditwheel=skip` also
+      # avoids the repair, but throws out the wheel's manylinux compliance
+      # *tag* entirely (falls back to a bare, PyPI/pip-rejected `linux_*`
+      # tag) -- confirmed by CI (linux x86 failed to even install its own
+      # just-built wheel: "sqlite-rs (v0.1.0) has no wheels with a matching
+      # platform tag"). `warn` keeps the real compliance tag while only
+      # skipping the problematic repair/relocation step.
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -214,7 +221,7 @@ jobs:
       # actually verify what's present in *-cross images before attempting a
       # build, so it always tries (and fails on) both regardless.
       #
-      # --auditwheel=skip: see the matching comment in the linux job -- same
+      # --auditwheel=warn: see the matching comment in the linux job -- same
       # risk of maturin relocating libsqlite3 into a private copy for _core
       # alone, leaving the clone module/LIBSQLITE3_PATH pointing at a
       # different, stale one. Not yet confirmed to manifest here (musllinux
@@ -224,7 +231,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 --auditwheel=skip
+          args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 --auditwheel=warn
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
           container: ghcr.io/rust-cross/musllinux_1_2-cross:${{ matrix.platform.cross_arch }}

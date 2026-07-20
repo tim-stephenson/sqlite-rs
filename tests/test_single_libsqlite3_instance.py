@@ -56,21 +56,36 @@ def _loaded_library_paths() -> set[Path]:
     if sys.platform == "darwin":
         libc = ctypes.CDLL(None)
         # dyld's own image-enumeration API, not a "private" Python attribute --
-        # it's exported by the dynamic linker under this exact C name.
+        # it's exported by the dynamic linker under this exact C name. ctypes
+        # can't statically type a dynamically-resolved C function's signature,
+        # hence the Any below regardless of the runtime .restype assignment.
         libc._dyld_get_image_name.restype = ctypes.c_char_p  # noqa: SLF001
-        count: int = libc._dyld_image_count()  # noqa: SLF001
+        count: int = libc._dyld_image_count()  # noqa: SLF001  # pyright: ignore[reportAny]
         names = (libc._dyld_get_image_name(i) for i in range(count))  # noqa: SLF001
-        return {Path(name.decode()).resolve() for name in names if name is not None}
+        return {
+            Path(name.decode()).resolve()  # pyright: ignore[reportAny]
+            for name in names  # pyright: ignore[reportAny]
+            if name is not None
+        }
 
     if sys.platform == "win32":
-        import win32api  # noqa: PLC0415 -- only importable on Windows
-        import win32process  # noqa: PLC0415 -- only importable on Windows
+        # pywin32 has bundled typeshed stubs (hence reportMissingModuleSource,
+        # not reportMissingImports) but isn't installed as a real package when
+        # type-checking from a non-Windows machine, so its own return types
+        # are Unknown/Any here regardless of the platform this actually runs
+        # on.
+        import win32api  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
+        import win32process  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
 
         hproc = win32api.GetCurrentProcess()
-        hmods = win32process.EnumProcessModulesEx(hproc, win32process.LIST_MODULES_ALL)
+        hmods = win32process.EnumProcessModulesEx(  # pyright: ignore[reportUnknownMemberType]
+            hproc, win32process.LIST_MODULES_ALL
+        )
         return {
-            Path(win32process.GetModuleFileNameEx(hproc, hmod)).resolve()
-            for hmod in hmods
+            Path(
+                win32process.GetModuleFileNameEx(hproc, hmod)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportAny]
+            ).resolve()
+            for hmod in hmods  # pyright: ignore[reportAny]
         }
 
     msg = f"unsupported platform: {sys.platform}"
