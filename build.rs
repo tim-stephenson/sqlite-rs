@@ -127,17 +127,21 @@ fn python_query(python: &str, code: &str) -> String {
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
-const CLONE_MODULE_SOURCES: &[&str] = &[
-    "blob.c",
-    "connection.c",
-    "cursor.c",
-    "microprotocols.c",
-    "module.c",
-    "prepare_protocol.c",
-    "row.c",
-    "statement.c",
-    "util.c",
-];
+/// The `.c` files directly under `cpython_sqlite_dir` (not `clinic/`, which
+/// holds generated `.c.h` headers, not translation units). Discovered
+/// rather than hardcoded because the source set varies by CPython minor
+/// version -- e.g. 3.10 has `cache.c` instead of `blob.c` (the `Blob` type
+/// was added in 3.11).
+fn clone_module_sources(cpython_sqlite_dir: &Path) -> Vec<PathBuf> {
+    let mut sources: Vec<PathBuf> = fs::read_dir(cpython_sqlite_dir)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", cpython_sqlite_dir.display()))
+        .map(|entry| entry.unwrap_or_else(|e| panic!("failed to read dir entry: {e}")).path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "c"))
+        .collect();
+    assert!(!sources.is_empty(), "found no .c files in {}", cpython_sqlite_dir.display());
+    sources.sort();
+    sources
+}
 
 /// Compile CPython's vendored (unmodified) `Modules/_sqlite/*.c` into a
 /// `_sqlite3<EXT_SUFFIX>` extension module in `python/sqlite_rs/sqlite3/`,
@@ -146,7 +150,7 @@ const CLONE_MODULE_SOURCES: &[&str] = &[
 ///
 /// The file must be named `_sqlite3<EXT_SUFFIX>` (not something distinctive
 /// of this project) because module.c hardcodes its init symbol as
-/// `PyInit__sqlite3` (see `vendor/cpython/Modules/_sqlite/module.c`), and
+/// `PyInit__sqlite3` (see e.g. `vendor/cpython/3.14/Modules/_sqlite/module.c`), and
 /// CPython's import machinery for extension modules looks up
 /// `PyInit_<last dotted component>`. Nesting it under `sqlite_rs/sqlite3/`
 /// gives it the distinct dotted name `sqlite_rs.sqlite3._sqlite3` -- never
@@ -167,10 +171,7 @@ fn build_sqlite_clone_module(
         "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))",
     );
 
-    let sources: Vec<PathBuf> = CLONE_MODULE_SOURCES
-        .iter()
-        .map(|f| cpython_sqlite_dir.join(f))
-        .collect();
+    let sources = clone_module_sources(cpython_sqlite_dir);
 
     let objects = cc::Build::new()
         .files(&sources)
