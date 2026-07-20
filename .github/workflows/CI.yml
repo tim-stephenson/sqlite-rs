@@ -80,6 +80,15 @@ jobs:
             target: armv7
             manylinux: "2_28"
             args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14
+          # riscv64 needs glibc new enough to have riscv64 support at all -- PyPA's
+          # oldest riscv64 baseline is manylinux_2_39 (verified: no PyPA image
+          # exists for any older manylinux_2_* tag). --find-interpreter to start,
+          # matching how every other *-cross target here was first verified
+          # empirically before pinning explicit -i lists where needed.
+          - runner: ubuntu-22.04
+            target: riscv64
+            manylinux: "2_39"
+            args: --release --out dist --find-interpreter
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
