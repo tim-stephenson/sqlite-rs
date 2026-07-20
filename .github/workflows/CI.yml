@@ -92,48 +92,44 @@ jobs:
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
     strategy:
+      fail-fast: false
       matrix:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
-            pypa_arch: x86_64
+            cross_arch: x86_64
+          - runner: ubuntu-22.04
+            target: x86
+            cross_arch: i686
           - runner: ubuntu-22.04
             target: aarch64
-            pypa_arch: aarch64
-          # armv7/i686 dropped: this job installs a *native* Rust toolchain inside a
-          # QEMU-emulated musllinux container, and Rust's release infra has no host
-          # rustup-init installer for armv7-unknown-linux-musleabihf or
-          # i686-unknown-linux-musl (musl armv7/i686 are cross-compile-only targets,
-          # not host platforms) -- static.rust-lang.org/rustup/dist/<triple>/rustup-init
-          # 404s for both. Fixing this needs real cross-compilation (install Rust on
-          # the x86_64 runner, `rustup target add`, and a musl cross-linker) instead of
-          # running natively under QEMU.
+            cross_arch: aarch64
+          - runner: ubuntu-22.04
+            target: armv7
+            cross_arch: armv7
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
-      # `maturin-action`'s default musllinux image (`ghcr.io/rust-cross/rust-musl-cross`) is a
-      # plain glibc Ubuntu image with only a musl-gcc *cross-compiler* bolted on -- it has no
-      # musl-built Python at all, which breaks compiling CPython's own vendored
-      # `Modules/_sqlite` C sources (see build.rs) against a real target Python.h/pyconfig.h.
-      # Point at the actual PyPA musllinux image instead: it bundles every supported CPython
-      # (and PyPy) under /opt/python with real headers, which build.rs's
-      # `find_cross_python_executable` already knows how to locate. Non-x86_64 targets need
-      # QEMU since that image is then a foreign architecture for this (x86_64) runner.
-      - uses: docker/setup-qemu-action@v4
-        if: matrix.platform.target != 'x86_64'
+      # ghcr.io/rust-cross/musllinux_1_2-cross is a fast, natively-running (x86_64
+      # host, cross-gcc bolted on, no QEMU) image dedicated to musl wheel building
+      # -- distinct from maturin-action's older default `rust-musl-cross` image,
+      # which is a general-purpose Rust musl cross-compiling image with no Python
+      # at all. This one bundles real target-arch CPython/PyPy installs under
+      # /opt/python, same as the manylinux-cross family; build.rs's cross-Python
+      # lookup (find_cross_python_executable / resolve_python) derives the
+      # target's Python.h/pyconfig.h include dir and EXT_SUFFIX from that
+      # directory layout instead of executing the (possibly foreign-architecture)
+      # interpreter, so no target Python needs to actually run.
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
-          # sccache's PyPI wheels don't ship musl-tagged builds past v0.10.0, so
-          # `uv pip install sccache` can't resolve anything inside this musllinux
-          # container regardless of version pin -- just skip it here.
-          sccache: false
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
-          container: quay.io/pypa/musllinux_1_2_${{ matrix.platform.pypa_arch }}
+          container: ghcr.io/rust-cross/musllinux_1_2-cross:${{ matrix.platform.cross_arch }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
