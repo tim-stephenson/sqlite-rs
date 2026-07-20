@@ -76,14 +76,16 @@ jobs:
             target: x86_64
             pypa_arch: x86_64
           - runner: ubuntu-22.04
-            target: x86
-            pypa_arch: i686
-          - runner: ubuntu-22.04
             target: aarch64
             pypa_arch: aarch64
-          - runner: ubuntu-22.04
-            target: armv7
-            pypa_arch: armv7l
+          # armv7/i686 dropped: this job installs a *native* Rust toolchain inside a
+          # QEMU-emulated musllinux container, and Rust's release infra has no host
+          # rustup-init installer for armv7-unknown-linux-musleabihf or
+          # i686-unknown-linux-musl (musl armv7/i686 are cross-compile-only targets,
+          # not host platforms) -- static.rust-lang.org/rustup/dist/<triple>/rustup-init
+          # 404s for both. Fixing this needs real cross-compilation (install Rust on
+          # the x86_64 runner, `rustup target add`, and a musl cross-linker) instead of
+          # running natively under QEMU.
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
