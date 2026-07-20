@@ -1,4 +1,5 @@
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -104,17 +105,19 @@ const CLONE_MODULE_SOURCES: &[&str] = &[
 ];
 
 /// Compile CPython's vendored (unmodified) `Modules/_sqlite/*.c` into a
-/// `_sqlite3<EXT_SUFFIX>` extension module in `python/sqlite_rs/`, dynamically
-/// linked against the `libsqlite3` built above instead of whatever SQLite the
-/// host Python was built with.
+/// `_sqlite3<EXT_SUFFIX>` extension module in `python/sqlite_rs/sqlite3/`,
+/// dynamically linked against the `libsqlite3` built above instead of
+/// whatever SQLite the host Python was built with.
 ///
 /// The file must be named `_sqlite3<EXT_SUFFIX>` (not something distinctive
 /// of this project) because module.c hardcodes its init symbol as
 /// `PyInit__sqlite3` (see `vendor/cpython/Modules/_sqlite/module.c`), and
 /// CPython's import machinery for extension modules looks up
-/// `PyInit_<last dotted component>`. Living inside `sqlite_rs/` gives it the
-/// distinct dotted name `sqlite_rs._sqlite3`, so it never shadows or
-/// conflicts with the stdlib's top-level `_sqlite3`.
+/// `PyInit_<last dotted component>`. Nesting it under `sqlite_rs/sqlite3/`
+/// gives it the distinct dotted name `sqlite_rs.sqlite3._sqlite3` -- never
+/// shadowing the stdlib's top-level `_sqlite3` -- while also matching
+/// stdlib's own internal layout (`sqlite3._sqlite3`), which is what
+/// `materialize_lib_sqlite3`'s rewritten imports below expect.
 fn build_sqlite_clone_module(
     cpython_sqlite_dir: &Path,
     sqlite_dir: &Path,
@@ -155,7 +158,8 @@ fn build_sqlite_clone_module(
         "macos" => {
             cmd.arg("-dynamiclib");
             cmd.arg("-undefined").arg("dynamic_lookup");
-            cmd.arg("-Wl,-rpath,@loader_path");
+            // One level up: python/sqlite_rs/sqlite3/_sqlite3.so -> ../libsqlite3.dylib
+            cmd.arg("-Wl,-rpath,@loader_path/..");
         }
         "windows" => {
             panic!(
@@ -165,7 +169,7 @@ fn build_sqlite_clone_module(
         }
         _ => {
             cmd.arg("-shared");
-            cmd.arg("-Wl,-rpath,$ORIGIN");
+            cmd.arg("-Wl,-rpath,$ORIGIN/..");
         }
     }
     cmd.arg("-o").arg(&out_path);
@@ -174,6 +178,65 @@ fn build_sqlite_clone_module(
     assert!(status.success(), "linking the sqlite3 clone module failed: {cmd:?}");
 
     out_path
+}
+
+/// Substitutions mechanically applied to both the vendored runtime
+/// `__init__.py`/`dbapi2.py` (via `materialize_lib_sqlite3`) and the vendored
+/// `.pyi` stubs (via `materialize_typeshed_sqlite3`) below -- both carry the
+/// identical self-referential absolute imports, since the stubs describe the
+/// same source. Order matters: the more specific "sqlite3.dbapi2" pattern
+/// must come before the bare "sqlite3" one.
+const SELF_REFERENTIAL_IMPORT_REWRITES: &[(&str, &str)] = &[
+    ("from sqlite3.dbapi2 import", "from sqlite_rs.sqlite3.dbapi2 import"),
+    ("from sqlite3 import", "from sqlite_rs.sqlite3 import"),
+    ("from _sqlite3 import", "from sqlite_rs.sqlite3._sqlite3 import"),
+];
+
+fn rewrite_self_referential_imports(source: String) -> String {
+    let mut rewritten = source;
+    for (from, to) in SELF_REFERENTIAL_IMPORT_REWRITES {
+        rewritten = rewritten.replace(from, to);
+    }
+    rewritten
+}
+
+/// Copy CPython's vendored (unmodified on disk, in `vendor/cpython/Lib/sqlite3/`)
+/// `__init__.py`/`dbapi2.py`/`dump.py` into `python/sqlite_rs/sqlite3/`.
+///
+/// `__init__.py` and `dbapi2.py` assume they ARE the top-level `sqlite3`/
+/// `_sqlite3` (`from sqlite3.dbapi2 import *`, `from _sqlite3 import *`) --
+/// absolute, not relative, imports -- so nesting them under `sqlite_rs`
+/// unmodified would resolve against the wrong (system stdlib) module, if
+/// any. `SELF_REFERENTIAL_IMPORT_REWRITES` mechanically corrects just those
+/// self-referential import lines; `dump.py` has none and is copied as-is.
+fn materialize_lib_sqlite3(vendor_lib_sqlite3_dir: &Path, out_dir: &Path) {
+    for name in ["__init__.py", "dbapi2.py", "dump.py"] {
+        let source = fs::read_to_string(vendor_lib_sqlite3_dir.join(name))
+            .unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
+        fs::write(out_dir.join(name), rewrite_self_referential_imports(source))
+            .unwrap_or_else(|e| panic!("failed to write {name}: {e}"));
+    }
+}
+
+/// Copy basedpyright's vendored (unmodified on disk, in `vendor/typeshed/stdlib/`)
+/// `_sqlite3.pyi`/`sqlite3/{__init__,dbapi2,dump}.pyi` into `python/sqlite_rs/sqlite3/`,
+/// applying the same `SELF_REFERENTIAL_IMPORT_REWRITES` as `materialize_lib_sqlite3`
+/// above -- these stubs describe the same source and carry the identical
+/// self-referential absolute imports (see scripts/vendor_typeshed_sqlite3.py).
+fn materialize_typeshed_sqlite3(vendor_typeshed_dir: &Path, out_dir: &Path) {
+    let stdlib = vendor_typeshed_dir.join("stdlib");
+    let files = [
+        (stdlib.join("_sqlite3.pyi"), out_dir.join("_sqlite3.pyi")),
+        (stdlib.join("sqlite3").join("__init__.pyi"), out_dir.join("__init__.pyi")),
+        (stdlib.join("sqlite3").join("dbapi2.pyi"), out_dir.join("dbapi2.pyi")),
+        (stdlib.join("sqlite3").join("dump.pyi"), out_dir.join("dump.pyi")),
+    ];
+    for (src, dest) in files {
+        let source =
+            fs::read_to_string(&src).unwrap_or_else(|e| panic!("failed to read {}: {e}", src.display()));
+        fs::write(&dest, rewrite_self_referential_imports(source))
+            .unwrap_or_else(|e| panic!("failed to write {}: {e}", dest.display()));
+    }
 }
 
 /// Compile `native/sqlite_rs_shim.c` (first-party, not vendored) and
@@ -210,20 +273,34 @@ fn main() {
     let manifest_dir = manifest_dir();
     let sqlite_dir = manifest_dir.join("vendor/sqlite");
     let cpython_sqlite_dir = manifest_dir.join("vendor/cpython/Modules/_sqlite");
+    let vendor_lib_sqlite3_dir = manifest_dir.join("vendor/cpython/Lib/sqlite3");
+    let vendor_typeshed_dir = manifest_dir.join("vendor/typeshed");
     let native_dir = manifest_dir.join("native");
     let python_pkg_dir = manifest_dir.join("python/sqlite_rs");
+    let sqlite3_pkg_dir = python_pkg_dir.join("sqlite3");
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", sqlite_dir.display());
     println!("cargo:rerun-if-changed={}", cpython_sqlite_dir.display());
+    println!("cargo:rerun-if-changed={}", vendor_lib_sqlite3_dir.display());
+    println!("cargo:rerun-if-changed={}", vendor_typeshed_dir.display());
     println!("cargo:rerun-if-changed={}", native_dir.display());
+
+    fs::create_dir_all(&sqlite3_pkg_dir)
+        .unwrap_or_else(|e| panic!("failed to create {}: {e}", sqlite3_pkg_dir.display()));
 
     let libsqlite3 = build_libsqlite3(&sqlite_dir, &python_pkg_dir);
     println!("cargo:warning=built {}", libsqlite3.display());
 
     let clone_module =
-        build_sqlite_clone_module(&cpython_sqlite_dir, &sqlite_dir, &python_pkg_dir, &python_pkg_dir);
+        build_sqlite_clone_module(&cpython_sqlite_dir, &sqlite_dir, &python_pkg_dir, &sqlite3_pkg_dir);
     println!("cargo:warning=built {}", clone_module.display());
+
+    materialize_lib_sqlite3(&vendor_lib_sqlite3_dir, &sqlite3_pkg_dir);
+    println!("cargo:warning=materialized {}", sqlite3_pkg_dir.display());
+
+    materialize_typeshed_sqlite3(&vendor_typeshed_dir, &sqlite3_pkg_dir);
+    println!("cargo:warning=materialized typeshed stubs into {}", sqlite3_pkg_dir.display());
 
     compile_shim_and_link_core(&native_dir, &cpython_sqlite_dir, &sqlite_dir, &python_pkg_dir);
 }

@@ -23,7 +23,7 @@ _EXEC_CALLBACK_T = ctypes.CFUNCTYPE(
 
 
 def test_query_via_rust_reads_rows_written_via_the_clone_module() -> None:
-    conn = sqlite_rs.connect(":memory:")
+    conn = sqlite_rs.sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE t (a INTEGER, b TEXT, c REAL)")
     conn.execute("INSERT INTO t VALUES (1, ?, 3.5)", ("hello",))
     conn.commit()
@@ -32,7 +32,7 @@ def test_query_via_rust_reads_rows_written_via_the_clone_module() -> None:
 
 
 def test_query_via_rust_writes_are_visible_via_the_clone_module() -> None:
-    conn = sqlite_rs.connect(":memory:")
+    conn = sqlite_rs.sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE t (a INTEGER)")
 
     sqlite_rs.query_via_rust(conn, "INSERT INTO t VALUES (42)")
@@ -43,12 +43,12 @@ def test_query_via_rust_writes_are_visible_via_the_clone_module() -> None:
 def test_query_via_rust_rejects_stdlib_sqlite3_connection() -> None:
     stdlib_conn = sqlite3.connect(":memory:")
 
-    with pytest.raises(TypeError, match=r"sqlite_rs\.connect"):
+    with pytest.raises(TypeError, match=r"sqlite_rs\.sqlite3\.connect"):
         sqlite_rs.query_via_rust(stdlib_conn, "SELECT 1")
 
 
 def test_query_via_rust_reports_sql_errors() -> None:
-    conn = sqlite_rs.connect(":memory:")
+    conn = sqlite_rs.sqlite3.connect(":memory:")
 
     with pytest.raises(ValueError, match="no such table"):
         sqlite_rs.query_via_rust(conn, "SELECT * FROM nonexistent")
@@ -107,12 +107,12 @@ def test_bundled_libsqlite3_is_directly_usable_via_ctypes(
     and Rust -- proving `libsqlite3` is a real, standalone, dynamically-loadable
     library, not an implementation detail baked into the other two.
     """
-    clone_version = sqlite_rs._sqlite3_clone.sqlite_version  # noqa: SLF001
+    clone_version = sqlite_rs.sqlite3.sqlite_version
     assert libsqlite3.sqlite3_libversion().decode() == clone_version
 
     # Write a file-backed database via sqlite_rs's own sqlite3 clone module...
     db_path = tmp_path / "interop.db"
-    conn = sqlite_rs.connect(str(db_path))
+    conn = sqlite_rs.sqlite3.connect(str(db_path))
     conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
     conn.execute("INSERT INTO t VALUES (1, 'hello')")
     conn.commit()
@@ -153,12 +153,12 @@ def test_connection_opened_via_ctypes_is_usable_via_the_sqlite_rs_api(
 
 
 def test_sqlite_rs_connection_is_usable_via_ctypes(libsqlite3: ctypes.CDLL) -> None:
-    """A connection opened via sqlite_rs.connect() can be driven directly by ctypes.
+    """A connection opened via sqlite_rs.sqlite3.connect() can be driven directly by ctypes.
 
     The mirror image of the previous test: proves `get_raw_db_ptr` hands out a
     pointer any FFI caller can act on, not just sqlite_rs's own Rust extension.
     """
-    conn = sqlite_rs.connect(":memory:")
+    conn = sqlite_rs.sqlite3.connect(":memory:")
     conn.execute("CREATE TABLE t (a INTEGER)")
     conn.execute("INSERT INTO t VALUES (13)")
     conn.commit()

@@ -2,7 +2,7 @@
 /// `libsqlite3` built by build.rs (see `vendor/sqlite/`), plus the
 /// first-party shim (`native/sqlite_rs_shim.c`) that extracts a raw
 /// `sqlite3*` out of a Connection object created by this project's own
-/// clone of CPython's sqlite3 module (`python/sqlite_rs/_sqlite3`).
+/// clone of CPython's sqlite3 module (`python/sqlite_rs/sqlite3/_sqlite3`).
 mod sqlite_ffi {
     use pyo3::ffi as pyffi;
     use std::os::raw::{c_char, c_int, c_uchar};
@@ -93,26 +93,26 @@ mod _core {
         run_query(py, db, sql)
     }
 
-    /// `connection` must be an instance of `sqlite_rs._sqlite3.Connection`
+    /// `connection` must be an instance of `sqlite_rs.sqlite3.Connection`
     /// (this project's own clone of CPython's sqlite3 module), not the
     /// stdlib `sqlite3.Connection`: the shim below extracts the raw
     /// `sqlite3*` by reading CPython's private Connection struct layout,
     /// which is only guaranteed to match for connections created by this
     /// package's own compiled clone module.
     ///
-    /// `sqlite_rs._sqlite3` is looked up by name rather than imported at
+    /// `sqlite_rs.sqlite3` is looked up by name rather than imported at
     /// module init time, since by the time any `#[pyfunction]` here is
-    /// actually called, `sqlite_rs` (and therefore `sqlite_rs._sqlite3`) is
+    /// actually called, `sqlite_rs` (and therefore `sqlite_rs.sqlite3`) is
     /// necessarily already fully imported -- this module IS a submodule of
     /// it.
     fn require_own_connection(py: Python<'_>, connection: &Bound<'_, PyAny>) -> PyResult<()> {
-        let connection_type = py.import("sqlite_rs._sqlite3")?.getattr("Connection")?;
+        let connection_type = py.import("sqlite_rs.sqlite3")?.getattr("Connection")?;
         if connection.is_instance(&connection_type)? {
             Ok(())
         } else {
             Err(PyTypeError::new_err(
-                "connection must be a Connection from sqlite_rs.connect() (sqlite_rs's own \
-                 sqlite3 clone), not the stdlib sqlite3 module",
+                "connection must be a Connection from sqlite_rs.sqlite3.connect() (sqlite_rs's \
+                 own sqlite3 clone), not the stdlib sqlite3 module",
             ))
         }
     }

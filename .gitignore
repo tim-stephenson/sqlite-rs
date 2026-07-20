@@ -31,6 +31,12 @@ __pycache__/
 *.dylib
 *.dll
 
+# Entirely build.rs-materialized from vendor/cpython/Lib/sqlite3/ and
+# vendor/typeshed/ (see build.rs's materialize_lib_sqlite3 /
+# materialize_typeshed_sqlite3) -- the pristine sources these are rewritten
+# from ARE committed, under vendor/.
+python/sqlite_rs/sqlite3/
+
 # Distribution / packaging
 .Python
 build/
@@ -40,6 +46,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+!vendor/cpython/Lib/
 lib64/
 parts/
 sdist/
@@ -51,6 +58,7 @@ share/python-wheels/
 *.egg
 MANIFEST
 !vendor/cpython/MANIFEST
+!vendor/typeshed/MANIFEST
 
 # PyInstaller
 #   Usually these files are written by a python script from a template

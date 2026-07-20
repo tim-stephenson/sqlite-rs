@@ -35,11 +35,26 @@ def _(sqlite_rs):
 
 
 @app.cell
+def _(sqlite_rs):
+    # sqlite_rs.sqlite3 mirrors the stdlib sqlite3 package's own layout: a
+    # DB-API 2.0 wrapper (sqlite3.dbapi2) around a C extension
+    # (sqlite3._sqlite3), both vendored unmodified from CPython and both
+    # importable at these exact dotted paths.
+    import sqlite_rs.sqlite3
+    import sqlite_rs.sqlite3._sqlite3
+    import sqlite_rs.sqlite3.dbapi2
+
+    (sqlite_rs.sqlite3, sqlite_rs.sqlite3.dbapi2, sqlite_rs.sqlite3._sqlite3)
+    return
+
+
+@app.cell
 def _(sqlite3, sqlite_rs):
-    # sqlite_rs.connect() is a from-scratch build of CPython's own sqlite3
-    # module, dynamically linked against sqlite_rs's own bundled libsqlite3
-    # -- so its version can (and does) differ from the system Python's.
-    conn = sqlite_rs.connect(":memory:")
+    # sqlite_rs.sqlite3.connect() is a from-scratch build of CPython's own
+    # sqlite3 module, dynamically linked against sqlite_rs's own bundled
+    # libsqlite3 -- so its version can (and does) differ from the system
+    # Python's.
+    conn = sqlite_rs.sqlite3.connect(":memory:")
     (sqlite3.sqlite_version, conn.execute("select sqlite_version()").fetchone()[0])
     return (conn,)
 
@@ -81,8 +96,8 @@ def _(conn, sqlite_rs):
 @app.cell
 def _(ctypes, sqlite_rs):
     # Load the bundled libsqlite3 directly -- the same shared library file
-    # sqlite_rs.connect() and query_via_rust are both already using -- via
-    # plain ctypes, no sqlite_rs API involved in this cell at all.
+    # sqlite_rs.sqlite3.connect() and query_via_rust are both already using
+    # -- via plain ctypes, no sqlite_rs API involved in this cell at all.
     libsqlite3 = ctypes.CDLL(sqlite_rs.LIBSQLITE3_PATH)
     libsqlite3.sqlite3_exec.argtypes = [
         ctypes.c_void_p,

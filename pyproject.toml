@@ -29,6 +29,7 @@ dev = [
     "sphinx-autobuild",
     "myst-parser",
     "pytest",
+    "basedpyright",
 ]
 
 [tool.ruff.lint]
