@@ -19,6 +19,22 @@ permissions:
   contents: read
 
 jobs:
+  ruff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.14"
+      # Pure static analysis over the Python sources -- unlike basedpyright
+      # (which needs to import the compiled extension module to type-check
+      # against it), ruff never executes or imports anything, so no Rust
+      # toolchain or `maturin develop` build step is needed here at all.
+      - name: Run ruff check
+        run: uv run ruff check .
+      - name: Run ruff format --check
+        run: uv run ruff format --check .
+
   basedpyright:
     runs-on: ubuntu-latest
     steps:
