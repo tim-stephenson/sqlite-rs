@@ -329,6 +329,13 @@ fn build_sqlite_clone_module(
         .include(&internal_dir)
         .pic(true)
         .warnings(false)
+        // CPython's own vendored sources use C99 syntax (e.g. `statement.c`'s
+        // `for (const char *pos = ...)`), but `cc`'s default dialect is
+        // whatever the target compiler defaults to -- manylinux-cross's
+        // aarch64/s390x/ppc64le/armv7 cross-gcc defaults to a pre-C99 mode,
+        // unlike the host gcc used for x86_64/i686. Pin it explicitly instead
+        // of relying on a compiler default that varies per target.
+        .std("c11")
         .compile_intermediates();
     assert!(!objects.is_empty(), "cc produced no object files for the sqlite3 clone module");
 
@@ -439,6 +446,9 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
         .include(&include_dir)
         .pic(true)
         .warnings(false)
+        // See the matching .std("c11") in build_sqlite_clone_module: don't
+        // rely on the cross-compiler's default C dialect.
+        .std("c11")
         .compile("sqlite_rs_shim");
 
     println!("cargo:rustc-link-search=native={}", libsqlite3_dir.display());
