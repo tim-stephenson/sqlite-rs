@@ -145,11 +145,18 @@ fn python_executable() -> String {
         .unwrap_or_else(|| "python3".to_string())
 }
 
-/// The target interpreter's own `"<major>.<minor>"`, e.g. `"3.12"` -- used to
-/// pick which vendored CPython minor version's `Modules/_sqlite` sources to
-/// compile against (see `cpython_vendor_dir`).
-fn python_minor_version(python: &str) -> String {
-    python_query(python, "import sysconfig; print(sysconfig.get_python_version())")
+/// The target CPython `"<major>.<minor>"` (no free-threaded `t` suffix --
+/// `vendor/cpython/<minor>/` has one directory per minor version regardless
+/// of GIL/free-threaded build, see `cpython_vendor_dir`), read directly from
+/// `pyo3_build_config`'s already-resolved target ABI. Must not execute a
+/// live interpreter for this: in cross builds (e.g. musllinux) the only
+/// "python" reachable via `PYO3_PYTHON`/PATH is maturin's own bootstrap
+/// interpreter, whose version has nothing to do with whichever interpreter
+/// this specific `--find-interpreter` build invocation is actually
+/// targeting.
+fn target_python_minor() -> String {
+    let version = pyo3_build_config::get().target_abi().version();
+    format!("{}.{}", version.major, version.minor)
 }
 
 /// `vendor/cpython/<minor>/`, e.g. `vendor/cpython/3.12/`, containing that
@@ -381,8 +388,7 @@ fn main() {
     let python_pkg_dir = manifest_dir.join("python/sqlite_rs");
     let sqlite3_pkg_dir = python_pkg_dir.join("sqlite3");
 
-    let python = python_executable();
-    let python_minor = python_minor_version(&python);
+    let python_minor = target_python_minor();
     let cpython_version_dir = cpython_vendor_dir(&vendor_cpython_dir, &python_minor);
     let cpython_sqlite_dir = cpython_version_dir.join("Modules/_sqlite");
     let vendor_lib_sqlite3_dir = cpython_version_dir.join("Lib/sqlite3");

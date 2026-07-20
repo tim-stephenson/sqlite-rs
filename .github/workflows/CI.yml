@@ -74,17 +74,31 @@ jobs:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
+            pypa_arch: x86_64
           - runner: ubuntu-22.04
             target: x86
+            pypa_arch: i686
           - runner: ubuntu-22.04
             target: aarch64
+            pypa_arch: aarch64
           - runner: ubuntu-22.04
             target: armv7
+            pypa_arch: armv7l
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
+      # `maturin-action`'s default musllinux image (`ghcr.io/rust-cross/rust-musl-cross`) is a
+      # plain glibc Ubuntu image with only a musl-gcc *cross-compiler* bolted on -- it has no
+      # musl-built Python at all, which breaks compiling CPython's own vendored
+      # `Modules/_sqlite` C sources (see build.rs) against a real target Python.h/pyconfig.h.
+      # Point at the actual PyPA musllinux image instead: it bundles every supported CPython
+      # (and PyPy) under /opt/python with real headers, which build.rs's
+      # `find_cross_python_executable` already knows how to locate. Non-x86_64 targets need
+      # QEMU since that image is then a foreign architecture for this (x86_64) runner.
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.platform.target != 'x86_64'
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -92,6 +106,7 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
+          container: quay.io/pypa/musllinux_1_2_${{ matrix.platform.pypa_arch }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
