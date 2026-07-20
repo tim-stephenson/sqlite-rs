@@ -67,6 +67,72 @@ fn build_libsqlite3(sqlite_dir: &Path, out_dir: &Path) -> PathBuf {
     out_path
 }
 
+/// Run `python -c <code>`, returning trimmed stdout on success or `None` on
+/// any failure (unlike `python_query` below, this must not panic -- it's
+/// used to probe candidate interpreters that may not actually be valid).
+fn try_python_version(python: &Path) -> Option<String> {
+    let output = Command::new(python)
+        .args(["-c", "import sysconfig; print(sysconfig.get_python_version())"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok().map(|s| s.trim().to_string())
+}
+
+/// Locate the target interpreter directly on disk when `pyo3_build_config`
+/// has no runnable `executable()` for it -- i.e. when cross compiling, which
+/// per PyO3/maturin's `PythonInterpreter::runnable` doc means "the target
+/// interpreter isn't runnable, and its executable is empty". This is exactly
+/// what happens for the musllinux Docker jobs: maturin still sets
+/// `PYO3_PYTHON`, but to its own glibc bootstrap interpreter (used only for
+/// pyo3's internal purposes), not to a usable target interpreter -- trusting
+/// it here would (and did) point this build's `-I` flags at the wrong
+/// Python's headers while compiling with a musl cross-compiler.
+///
+/// manylinux/musllinux Docker images install every supported target
+/// interpreter under `/opt/python` (CPython, e.g. `cp310-cp310/`) and
+/// `/opt/pypy` (PyPy, e.g. `pp311-pypy311_pp73/`), so locate the one
+/// matching pyo3_build_config's resolved target version/implementation and
+/// confirm it actually reports that version before trusting it.
+fn find_cross_python_executable() -> Option<PathBuf> {
+    let abi = pyo3_build_config::get().target_abi();
+    let version = abi.version();
+    let is_pypy = matches!(abi.implementation(), pyo3_build_config::PythonImplementation::PyPy);
+    let threaded = abi.kind().is_free_threaded();
+
+    let (root, dir_prefix, exe_name) = if is_pypy {
+        (
+            "/opt/pypy",
+            format!("pp{}{}-", version.major, version.minor),
+            format!("pypy{}.{}", version.major, version.minor),
+        )
+    } else {
+        let tag = format!("cp{}{}", version.major, version.minor);
+        let suffix = if threaded { "t" } else { "" };
+        (
+            "/opt/python",
+            format!("{tag}-{tag}{suffix}"),
+            format!("python{}.{}{suffix}", version.major, version.minor),
+        )
+    };
+
+    let expected_version = format!("{}.{}", version.major, version.minor);
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries.filter_map(|e| e.ok()) {
+        if !entry.file_name().to_string_lossy().starts_with(&dir_prefix) {
+            continue;
+        }
+        let candidate = entry.path().join("bin").join(&exe_name);
+        if candidate.is_file() && try_python_version(&candidate).as_deref() == Some(expected_version.as_str())
+        {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
 /// Path of the host Python interpreter that pyo3 itself is building against,
 /// so the clone module below targets exactly the same interpreter as `_core`
 /// rather than re-discovering one independently.
@@ -74,6 +140,7 @@ fn python_executable() -> String {
     pyo3_build_config::get()
         .executable()
         .map(str::to_owned)
+        .or_else(|| find_cross_python_executable().map(|p| p.to_string_lossy().into_owned()))
         .or_else(|| env::var("PYO3_PYTHON").ok())
         .unwrap_or_else(|| "python3".to_string())
 }
