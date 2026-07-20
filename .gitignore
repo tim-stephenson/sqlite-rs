@@ -49,7 +49,7 @@ downloads/
 eggs/
 .eggs/
 lib/
-!vendor/cpython/Lib/
+!vendor/cpython/*/Lib/
 lib64/
 parts/
 sdist/
@@ -60,7 +60,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
-!vendor/cpython/MANIFEST
+!vendor/cpython/*/MANIFEST
 !vendor/typeshed/MANIFEST
 
 # PyInstaller

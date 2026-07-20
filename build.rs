@@ -78,6 +78,41 @@ fn python_executable() -> String {
         .unwrap_or_else(|| "python3".to_string())
 }
 
+/// The target interpreter's own `"<major>.<minor>"`, e.g. `"3.12"` -- used to
+/// pick which vendored CPython minor version's `Modules/_sqlite` sources to
+/// compile against (see `cpython_vendor_dir`).
+fn python_minor_version(python: &str) -> String {
+    python_query(python, "import sysconfig; print(sysconfig.get_python_version())")
+}
+
+/// `vendor/cpython/<minor>/`, e.g. `vendor/cpython/3.12/`, containing that
+/// minor version's vendored `Modules/_sqlite` and `Lib/sqlite3` sources (see
+/// scripts/vendor_cpython.py). The vendored `Modules/_sqlite/*.c` sources
+/// reach into CPython's internal (`pycore_*.h`) headers, which are not a
+/// stable API across minor versions, so build.rs must compile against the
+/// exact minor version of whichever interpreter it's building for rather
+/// than a single pinned version.
+fn cpython_vendor_dir(vendor_cpython_dir: &Path, minor: &str) -> PathBuf {
+    let dir = vendor_cpython_dir.join(minor);
+    if !dir.join("Modules/_sqlite").is_dir() {
+        let available: Vec<String> = fs::read_dir(vendor_cpython_dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().is_dir())
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        panic!(
+            "no vendored CPython sources for Python {minor} in {}; available: {available:?}. \
+             Run `python scripts/vendor_cpython.py` to vendor more minor versions.",
+            vendor_cpython_dir.display()
+        );
+    }
+    dir
+}
+
 /// Run `python -c <code>` and return trimmed stdout.
 fn python_query(python: &str, code: &str) -> String {
     let output = Command::new(python)
@@ -272,17 +307,25 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
 fn main() {
     let manifest_dir = manifest_dir();
     let sqlite_dir = manifest_dir.join("vendor/sqlite");
-    let cpython_sqlite_dir = manifest_dir.join("vendor/cpython/Modules/_sqlite");
-    let vendor_lib_sqlite3_dir = manifest_dir.join("vendor/cpython/Lib/sqlite3");
+    let vendor_cpython_dir = manifest_dir.join("vendor/cpython");
     let vendor_typeshed_dir = manifest_dir.join("vendor/typeshed");
     let native_dir = manifest_dir.join("native");
     let python_pkg_dir = manifest_dir.join("python/sqlite_rs");
     let sqlite3_pkg_dir = python_pkg_dir.join("sqlite3");
 
+    let python = python_executable();
+    let python_minor = python_minor_version(&python);
+    let cpython_version_dir = cpython_vendor_dir(&vendor_cpython_dir, &python_minor);
+    let cpython_sqlite_dir = cpython_version_dir.join("Modules/_sqlite");
+    let vendor_lib_sqlite3_dir = cpython_version_dir.join("Lib/sqlite3");
+
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed={}", sqlite_dir.display());
-    println!("cargo:rerun-if-changed={}", cpython_sqlite_dir.display());
-    println!("cargo:rerun-if-changed={}", vendor_lib_sqlite3_dir.display());
+    // Watch the whole vendor/cpython tree, not just python_minor's
+    // subdirectory: rebuilding for a different interpreter (e.g. `maturin
+    // develop` against a different venv) must pick up the newly-selected
+    // minor version's sources too.
+    println!("cargo:rerun-if-changed={}", vendor_cpython_dir.display());
     println!("cargo:rerun-if-changed={}", vendor_typeshed_dir.display());
     println!("cargo:rerun-if-changed={}", native_dir.display());
     // Once any explicit rerun-if-changed is emitted, Cargo stops watching the
