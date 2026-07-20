@@ -40,65 +40,37 @@ jobs:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
-            manylinux: "2014"
-            container: quay.io/pypa/manylinux2014_x86_64
-            sccache: true
           - runner: ubuntu-22.04
             target: x86
-            manylinux: "2014"
-            container: quay.io/pypa/manylinux2014_i686
-            sccache: true
           - runner: ubuntu-22.04
             target: aarch64
-            manylinux: "2014"
-            container: quay.io/pypa/manylinux2014_aarch64
-            sccache: true
-          # armv7l has no manylinux2014 image at all (PEP 599 never covered it);
-          # the closest PyPA image is the newer manylinux_2_31 baseline.
           - runner: ubuntu-22.04
             target: armv7
-            manylinux: "2_31"
-            container: quay.io/pypa/manylinux_2_31_armv7l
-            # sccache's PyPI wheels only cover aarch64/i686/x86_64/riscv64 manylinux
-            # (see pypi.org/project/sccache/#files) -- no armv7l wheel exists at all.
-            sccache: false
           - runner: ubuntu-22.04
             target: s390x
-            manylinux: "2014"
-            container: quay.io/pypa/manylinux2014_s390x
-            # same sccache wheel gap as armv7l above -- no s390x wheel published.
-            sccache: false
           - runner: ubuntu-22.04
             target: ppc64le
-            manylinux: "2014"
-            container: quay.io/pypa/manylinux2014_ppc64le
-            # same sccache wheel gap as armv7l above -- no ppc64le wheel published.
-            sccache: false
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
-      # `manylinux: auto` picks maturin-action's `-cross` images (e.g.
-      # ghcr.io/rust-cross/manylinux2014-cross:s390x) for non-x86 targets: a glibc
-      # x86_64 host with a cross-gcc bolted on, cross-compiling with no real
-      # target-arch Python installed -- so build.rs's `-I` (CPython's own
-      # `pyconfig.h` doing its multiarch `#include <s390x-linux-gnu/python3.10/
-      # pyconfig.h>`) has nothing to find. Same root cause the musllinux job hit
-      # with `rust-musl-cross`; the same fix applies -- pin the real PyPA image
-      # (which bundles genuine target-arch CPython installs under /opt/python)
-      # and run it under QEMU, since it's then a foreign architecture for this
-      # (x86_64) runner. x86_64/x86(i686) run natively, no QEMU needed.
-      - uses: docker/setup-qemu-action@v4
-        if: matrix.platform.target != 'x86_64' && matrix.platform.target != 'x86'
+      # `manylinux: auto` picks maturin-action's fast, natively-running `*-cross`
+      # images (e.g. ghcr.io/rust-cross/manylinux2014-cross:s390x) for non-x86
+      # targets: a glibc x86_64 host with a cross-gcc bolted on, no QEMU needed at
+      # all. build.rs's cross-Python lookup (find_cross_python_executable /
+      # resolve_python) derives the target's Python.h/pyconfig.h include dir and
+      # EXT_SUFFIX from the manylinux/musllinux /opt/python/<tag>/ directory
+      # layout instead of executing the (possibly foreign-architecture, since
+      # this image never runs under QEMU) interpreter, so no target Python needs
+      # to actually run.
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
-          sccache: ${{ matrix.platform.sccache && !startsWith(github.ref, 'refs/tags/') }}
-          manylinux: ${{ matrix.platform.manylinux }}
-          container: ${{ matrix.platform.container }}
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: auto
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:

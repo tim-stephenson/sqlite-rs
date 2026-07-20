@@ -69,7 +69,9 @@ fn build_libsqlite3(sqlite_dir: &Path, out_dir: &Path) -> PathBuf {
 
 /// Run `python -c <code>`, returning trimmed stdout on success or `None` on
 /// any failure (unlike `python_query` below, this must not panic -- it's
-/// used to probe candidate interpreters that may not actually be valid).
+/// used to probe candidate interpreters that may not actually be valid, and,
+/// for cross builds, may not even be executable at all -- see
+/// `find_cross_python_executable`).
 fn try_python_version(python: &Path) -> Option<String> {
     let output = Command::new(python)
         .args(["-c", "import sysconfig; print(sysconfig.get_python_version())"])
@@ -94,8 +96,16 @@ fn try_python_version(python: &Path) -> Option<String> {
 /// manylinux/musllinux Docker images install every supported target
 /// interpreter under `/opt/python` (CPython, e.g. `cp310-cp310/`) and
 /// `/opt/pypy` (PyPy, e.g. `pp311-pypy311_pp73/`), so locate the one
-/// matching pyo3_build_config's resolved target version/implementation and
-/// confirm it actually reports that version before trusting it.
+/// matching pyo3_build_config's resolved target version/implementation.
+/// Confirm it actually reports that version when it *can* be executed (e.g.
+/// same-architecture cross builds, or foreign ones running under QEMU) --
+/// but when a candidate can't be executed at all (a genuine foreign-arch
+/// binary with no emulation registered, e.g. cross-compiling from a fast
+/// native `*-cross` image), trust the directory-naming convention itself
+/// rather than treat "can't execute" as "wrong version". That convention is
+/// already exact enough on its own: `dir_prefix` encodes the full version
+/// tag (e.g. "cp311-cp311"), so a matching directory can't belong to a
+/// different interpreter version.
 fn find_cross_python_executable() -> Option<PathBuf> {
     let abi = pyo3_build_config::get().target_abi();
     let version = abi.version();
@@ -125,24 +135,91 @@ fn find_cross_python_executable() -> Option<PathBuf> {
             continue;
         }
         let candidate = entry.path().join("bin").join(&exe_name);
-        if candidate.is_file() && try_python_version(&candidate).as_deref() == Some(expected_version.as_str())
-        {
-            return Some(candidate);
+        if !candidate.is_file() {
+            continue;
+        }
+        match try_python_version(&candidate) {
+            Some(v) if v == expected_version => return Some(candidate),
+            Some(_) => continue,
+            None => return Some(candidate),
         }
     }
     None
 }
 
-/// Path of the host Python interpreter that pyo3 itself is building against,
-/// so the clone module below targets exactly the same interpreter as `_core`
+/// Where a target Python interpreter came from, since that determines
+/// whether it's safe to execute it to answer `sysconfig` questions.
+enum PythonSource {
+    /// Runnable on this machine right now -- a native build's own
+    /// interpreter (which may be a venv, so its headers can live anywhere;
+    /// `sysconfig` must be asked, not guessed), or a same-architecture cross
+    /// build. Safe to execute.
+    Runnable(String),
+    /// Found via `find_cross_python_executable`'s manylinux/musllinux
+    /// `/opt/python/<tag>/bin/<exe>` layout, but not necessarily executable
+    /// -- may be a genuine foreign-architecture binary with no QEMU/binfmt
+    /// registered. Its `sysconfig` data must be derived from the fixed
+    /// layout instead of executed.
+    CrossFound(PathBuf),
+}
+
+/// The target Python interpreter that pyo3 itself is building against, so
+/// the clone module below targets exactly the same interpreter as `_core`
 /// rather than re-discovering one independently.
-fn python_executable() -> String {
-    pyo3_build_config::get()
-        .executable()
-        .map(str::to_owned)
-        .or_else(|| find_cross_python_executable().map(|p| p.to_string_lossy().into_owned()))
-        .or_else(|| env::var("PYO3_PYTHON").ok())
-        .unwrap_or_else(|| "python3".to_string())
+fn resolve_python() -> PythonSource {
+    if let Some(exe) = pyo3_build_config::get().executable() {
+        return PythonSource::Runnable(exe.to_owned());
+    }
+    if let Some(path) = find_cross_python_executable() {
+        return PythonSource::CrossFound(path);
+    }
+    if let Ok(exe) = env::var("PYO3_PYTHON") {
+        return PythonSource::Runnable(exe);
+    }
+    PythonSource::Runnable("python3".to_string())
+}
+
+/// `sysconfig.get_path('include')` for `python`, without executing anything
+/// for a `CrossFound` interpreter that may not be executable at all: CPython
+/// (and PyPy, which mirrors it for C-extension compatibility) always installs
+/// headers at `<prefix>/include/<exe_name>` under the POSIX sysconfig scheme
+/// (e.g. `bin/python3.11` <-> `include/python3.11/`, `bin/python3.13t` <->
+/// `include/python3.13t/`) -- the exact same naming `find_cross_python_executable`
+/// already trusts to build `exe_name` in the first place.
+fn include_dir(python: &PythonSource) -> PathBuf {
+    match python {
+        PythonSource::Runnable(exe) => {
+            PathBuf::from(python_query(exe, "import sysconfig; print(sysconfig.get_path('include'))"))
+        }
+        PythonSource::CrossFound(path) => {
+            let exe_name = path.file_name().unwrap_or_else(|| panic!("no filename in {}", path.display()));
+            let prefix = path
+                .parent() // .../bin
+                .and_then(Path::parent) // .../<tag>
+                .unwrap_or_else(|| panic!("unexpected cross python path layout: {}", path.display()));
+            prefix.join("include").join(exe_name)
+        }
+    }
+}
+
+/// `sysconfig.get_config_var('EXT_SUFFIX')` for `python`, without executing
+/// anything for a `CrossFound` interpreter. CPython's import machinery
+/// always accepts a bare, untagged `.so` as a fallback suffix (see
+/// `Python/dynload_shlib.c`'s `_PyImport_DynLoadFiletab`, always ending in an
+/// untagged entry) specifically so extension modules don't have to be built
+/// with the exact platform/ABI tag -- reconstructing that tag by hand per
+/// target (distinguishing e.g. "ppc64le" from its actual multiarch triplet
+/// "powerpc64le", glibc vs musl, free-threaded "t") would be exactly the kind
+/// of hand-rolled cross-platform logic this is trying to avoid. This branch
+/// only ever runs for Linux cross builds (macOS/Windows always have a
+/// runnable interpreter), so `.so` is always correct here.
+fn ext_suffix(python: &PythonSource) -> String {
+    match python {
+        PythonSource::Runnable(exe) => {
+            python_query(exe, "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))")
+        }
+        PythonSource::CrossFound(_) => ".so".to_string(),
+    }
 }
 
 /// The target CPython `"<major>.<minor>"` (no free-threaded `t` suffix --
@@ -237,13 +314,10 @@ fn build_sqlite_clone_module(
     libsqlite3_dir: &Path,
     out_dir: &Path,
 ) -> PathBuf {
-    let python = python_executable();
-    let include_dir = python_query(&python, "import sysconfig; print(sysconfig.get_path('include'))");
-    let internal_dir = Path::new(&include_dir).join("internal");
-    let ext_suffix = python_query(
-        &python,
-        "import sysconfig; print(sysconfig.get_config_var('EXT_SUFFIX'))",
-    );
+    let python = resolve_python();
+    let include_dir = include_dir(&python);
+    let internal_dir = include_dir.join("internal");
+    let ext_suffix = ext_suffix(&python);
 
     let sources = clone_module_sources(cpython_sqlite_dir);
 
@@ -354,8 +428,8 @@ fn materialize_typeshed_sqlite3(vendor_typeshed_dir: &Path, out_dir: &Path) {
 /// linking at the `libsqlite3` built above so it shares the same SQLite
 /// instance as the clone module.
 fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqlite_dir: &Path, libsqlite3_dir: &Path) {
-    let python = python_executable();
-    let include_dir = python_query(&python, "import sysconfig; print(sysconfig.get_path('include'))");
+    let python = resolve_python();
+    let include_dir = include_dir(&python);
 
     cc::Build::new()
         .file(native_dir.join("sqlite_rs_shim.c"))
