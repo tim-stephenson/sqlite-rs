@@ -30,7 +30,7 @@ jobs:
       - name: Build the extension module
         run: uv run maturin develop --uv
       - name: Run basedpyright
-        run: uv run basedpyright .
+        run: uv run basedpyright . --warnings
 
   linux:
     runs-on: ${{ matrix.platform.runner }}
