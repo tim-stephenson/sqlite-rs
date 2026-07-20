@@ -12,6 +12,8 @@ def _():
 
     import sqlite_rs
     import sqlite_rs._sqlite3
+    import sqlite_rs.sqlite3._sqlite3
+    import sqlite_rs.sqlite3.dbapi2
 
     return ctypes, sqlite3, sqlite_rs, sys
 
@@ -36,14 +38,6 @@ def _(sqlite_rs):
 
 @app.cell
 def _(sqlite_rs):
-    # sqlite_rs.sqlite3 mirrors the stdlib sqlite3 package's own layout: a
-    # DB-API 2.0 wrapper (sqlite3.dbapi2) around a C extension
-    # (sqlite3._sqlite3), both vendored unmodified from CPython and both
-    # importable at these exact dotted paths.
-    import sqlite_rs.sqlite3
-    import sqlite_rs.sqlite3._sqlite3
-    import sqlite_rs.sqlite3.dbapi2
-
     (sqlite_rs.sqlite3, sqlite_rs.sqlite3.dbapi2, sqlite_rs.sqlite3._sqlite3)  # noqa: SLF001
     return
 
