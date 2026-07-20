@@ -28,7 +28,8 @@ if sys.platform == "win32":
     # not that directory's parent -- unlike @loader_path/$ORIGIN on
     # macOS/Linux, there's no relative-path traversal at the PE/link level.
     # sqlite_rs.sqlite3._sqlite3 (one directory below this file) needs this
-    # directory added explicitly to find libsqlite3's renamed sqlite3.dll;
+    # directory added explicitly to find the bundled sqlite_rs_libsqlite3.dll
+    # (see shared_lib_name() in build.rs for why it isn't just sqlite3.dll);
     # _core (same directory) doesn't strictly need it but this is harmless
     # defense-in-depth for it too. Must run before any native import below.
     _ = os.add_dll_directory(str(Path(__file__).parent))
@@ -39,7 +40,7 @@ from sqlite_rs._core import (
     query_via_rust,  # pyright: ignore[reportUnknownVariableType]
 )
 
-_LIBSQLITE3_NAMES = {"darwin": "libsqlite3.dylib", "win32": "sqlite3.dll"}
+_LIBSQLITE3_NAMES = {"darwin": "libsqlite3.dylib", "win32": "sqlite_rs_libsqlite3.dll"}
 
 #: Path to the libsqlite3 dylib/so bundled alongside this package's native
 #: modules -- the one library ``sqlite3.connect``, :func:`query_via_rust`,

@@ -20,10 +20,29 @@ fn target_os() -> String {
 }
 
 /// Shared library filename for `name` on the target OS, e.g. "sqlite3" -> "libsqlite3.dylib".
+///
+/// Windows gets a project-prefixed name (`sqlite_rs_libsqlite3.dll`, not the
+/// upstream-conventional `sqlite3.dll` used on macOS/Linux) because CPython's
+/// own Windows distribution bundles its own same-named `sqlite3.dll` for the
+/// stdlib `sqlite3` module. Windows resolves a DLL's *implicit* dependencies
+/// (e.g. the clone module's own link-time dependency on this library) by
+/// matching an already-loaded module's bare filename first, before ever
+/// consulting the search path -- so if the stdlib `sqlite3` module happens to
+/// load first in a process that also imports sqlite_rs, the clone module's
+/// dependency on "sqlite3.dll" would silently resolve to CPython's *own*
+/// (differently-versioned) copy instead of ours, observed in practice as
+/// sqlite_rs.sqlite3.sqlite_version reporting a different SQLite version than
+/// the actually-bundled one. macOS/Linux don't have this problem: Mach-O
+/// dependency resolution is keyed by the library's install name
+/// (`@rpath/libsqlite3.dylib` for ours vs. the system's absolute
+/// `/usr/lib/libsqlite3.dylib`, never confused despite the same basename),
+/// and ELF's is keyed by SONAME (our unversioned `libsqlite3.so` vs. the
+/// system's versioned `libsqlite3.so.0`) -- neither collides with an
+/// already-loaded module purely by filename the way Windows does.
 fn shared_lib_name(name: &str) -> String {
     match target_os().as_str() {
         "macos" => format!("lib{name}.dylib"),
-        "windows" => format!("{name}.dll"),
+        "windows" => format!("sqlite_rs_lib{name}.dll"),
         _ => format!("lib{name}.so"),
     }
 }
