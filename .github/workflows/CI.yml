@@ -82,9 +82,7 @@ jobs:
             args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14
           # riscv64 needs glibc new enough to have riscv64 support at all -- PyPA's
           # oldest riscv64 baseline is manylinux_2_39 (verified: no PyPA image
-          # exists for any older manylinux_2_* tag). --find-interpreter to start,
-          # matching how every other *-cross target here was first verified
-          # empirically before pinning explicit -i lists where needed.
+          # exists for any older manylinux_2_* tag).
           #
           # Unlike aarch64/s390x/ppc64le/armv7, `manylinux: "2_39"` alone picked
           # the *native* quay.io/pypa/manylinux_2_39_riscv64 image instead of the
@@ -92,11 +90,16 @@ jobs:
           # apparently doesn't cover riscv64 yet, and running a genuine riscv64
           # container with no QEMU registered in this job fails immediately
           # ("exec format error"). Point at the -cross image explicitly instead.
+          #
+          # All 6 CPython versions built successfully there -- only PyPy 3.11
+          # fails (PyPy doesn't publish riscv64 builds at all, same as
+          # s390x/ppc64le/armv7 above), so pin the same kind of explicit -i
+          # list rather than --find-interpreter's unverified guess.
           - runner: ubuntu-22.04
             target: riscv64
             manylinux: "2_39"
             container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
-            args: --release --out dist --find-interpreter
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
