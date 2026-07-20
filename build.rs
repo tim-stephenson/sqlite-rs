@@ -147,7 +147,19 @@ fn find_cross_python_executable() -> Option<CrossPython> {
     let expected_version = format!("{}.{}", version.major, version.minor);
     let entries = fs::read_dir("/opt/python").ok()?;
     for entry in entries.filter_map(|e| e.ok()) {
-        if !entry.file_name().to_string_lossy().starts_with(&dir_prefix) {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // PyPy's `dir_prefix` is a genuine prefix (the full name has an
+        // unpredictable suffix, e.g. "pp311-pypy311_pp73"), so `starts_with`
+        // is correct there -- but CPython's `dir_prefix` is already the
+        // *complete* expected name (e.g. "cp313-cp313" or "cp313-cp313t"), so
+        // it must match exactly. Otherwise a non-free-threaded request like
+        // "cp313-cp313" would also match the free-threaded "cp313-cp313t"
+        // directory (a literal string-prefix of it), landing on the wrong
+        // interpreter depending on directory iteration order -- which has no
+        // guaranteed ordering at all.
+        let matches = if is_pypy { name.starts_with(&dir_prefix) } else { name == dir_prefix.as_str() };
+        if !matches {
             continue;
         }
         let candidate = entry.path().join("bin").join(&exe_name);
