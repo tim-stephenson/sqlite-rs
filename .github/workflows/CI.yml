@@ -41,9 +41,11 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             manylinux: auto
+            args: --release --out dist --find-interpreter
           - runner: ubuntu-22.04
             target: x86
             manylinux: auto
+            args: --release --out dist --find-interpreter
           # aarch64/s390x/ppc64le/armv7: manylinux2014-cross's bundled cross-gcc
           # is too old to ship stdatomic.h, which CPython 3.13+'s mimalloc
           # allocator requires -- manylinux_2_28-cross bundles a newer one that
@@ -53,25 +55,31 @@ jobs:
           - runner: ubuntu-22.04
             target: aarch64
             manylinux: "2_28"
-          # s390x/ppc64le/armv7: PyPy doesn't publish official builds for these
-          # architectures at all (only x86/x86_64/aarch64), but --find-interpreter
-          # still discovers the (non-functional, for this arch) PyPy directory
-          # under /opt/python and tries to build for it anyway, failing the whole
-          # job. skip_pypy removes that directory before maturin looks, so
-          # discovery just doesn't find it -- no need to enumerate which CPython
-          # versions to build for instead.
+            args: --release --out dist --find-interpreter
+          # s390x/ppc64le/armv7: maturin's --find-interpreter doesn't actually
+          # scan these *-cross images' filesystem for what interpreters are
+          # really present -- it optimistically assumes a fixed set of
+          # "commonly available" tags for the target triple and tries all of
+          # them regardless, so it always attempts (and fails) a build for
+          # whichever aren't really there instead of skipping them. What's
+          # empirically confirmed present (by which CPython/CPython+free-
+          # threaded/PyPy builds actually succeeded here) varies per
+          # architecture -- PyPy isn't published upstream at all for these
+          # three, and free-threaded 3.14 is missing for s390x/armv7 too --
+          # so each needs its own explicit -i list of proven-working
+          # interpreters instead of --find-interpreter's unverified guess.
           - runner: ubuntu-22.04
             target: s390x
             manylinux: "2_28"
-            skip_pypy: true
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14
           - runner: ubuntu-22.04
             target: ppc64le
             manylinux: "2_28"
-            skip_pypy: true
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t
           - runner: ubuntu-22.04
             target: armv7
             manylinux: "2_28"
-            skip_pypy: true
+            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -90,10 +98,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
+          args: ${{ matrix.platform.args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
-          before-script-linux: ${{ matrix.platform.skip_pypy && 'rm -rf /opt/python/pp*' || '' }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -127,17 +134,26 @@ jobs:
       # host, cross-gcc bolted on, no QEMU) image dedicated to musl wheel building
       # -- distinct from maturin-action's older default `rust-musl-cross` image,
       # which is a general-purpose Rust musl cross-compiling image with no Python
-      # at all. This one bundles real target-arch CPython/PyPy installs under
+      # at all. This one bundles real target-arch CPython installs under
       # /opt/python, same as the manylinux-cross family; build.rs's cross-Python
       # lookup (find_cross_python_executable / resolve_python) derives the
       # target's Python.h/pyconfig.h include dir and EXT_SUFFIX from that
       # directory layout instead of executing the (possibly foreign-architecture)
       # interpreter, so no target Python needs to actually run.
+      #
+      # Explicit -i list instead of --find-interpreter: this image's bundled
+      # version set tops out at 3.13 (confirmed by the *native*,
+      # QEMU-emulated musllinux_1_2 image successfully building 3.10-3.15/
+      # 3.14t/3.15t, while this fast -cross image fails past 3.13 on every
+      # target) and doesn't have PyPy at all (musl has no PyPy builds
+      # upstream, on any architecture) -- but --find-interpreter doesn't
+      # actually verify what's present in *-cross images before attempting a
+      # build, so it always tries (and fails on) both regardless.
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
+          args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
           container: ghcr.io/rust-cross/musllinux_1_2-cross:${{ matrix.platform.cross_arch }}
