@@ -40,37 +40,49 @@ jobs:
         platform:
           - runner: ubuntu-22.04
             target: x86_64
+            manylinux: auto
           - runner: ubuntu-22.04
             target: x86
+            manylinux: auto
+          # aarch64/s390x/ppc64le/armv7: manylinux2014-cross's bundled cross-gcc
+          # is too old to ship stdatomic.h, which CPython 3.13+'s mimalloc
+          # allocator requires -- manylinux_2_28-cross bundles a newer one that
+          # has it (verified against ghcr.io/rust-cross/manylinux_2_28-cross's
+          # actual published tags -- it covers armv7 even though PyPA doesn't
+          # publish a *native* manylinux_2_28_armv7l image).
           - runner: ubuntu-22.04
             target: aarch64
-          - runner: ubuntu-22.04
-            target: armv7
+            manylinux: "2_28"
           - runner: ubuntu-22.04
             target: s390x
+            manylinux: "2_28"
           - runner: ubuntu-22.04
             target: ppc64le
+            manylinux: "2_28"
+          - runner: ubuntu-22.04
+            target: armv7
+            manylinux: "2_28"
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
-      # `manylinux: auto` picks maturin-action's fast, natively-running `*-cross`
-      # images (e.g. ghcr.io/rust-cross/manylinux2014-cross:s390x) for non-x86
-      # targets: a glibc x86_64 host with a cross-gcc bolted on, no QEMU needed at
-      # all. build.rs's cross-Python lookup (find_cross_python_executable /
-      # resolve_python) derives the target's Python.h/pyconfig.h include dir and
-      # EXT_SUFFIX from the manylinux/musllinux /opt/python/<tag>/ directory
-      # layout instead of executing the (possibly foreign-architecture, since
-      # this image never runs under QEMU) interpreter, so no target Python needs
-      # to actually run.
+      # These `manylinux:` values pick maturin-action's fast, natively-running
+      # `*-cross` images (e.g. ghcr.io/rust-cross/manylinux_2_28-cross:s390x)
+      # for non-x86 targets: a glibc x86_64 host with a cross-gcc bolted on, no
+      # QEMU needed at all. build.rs's cross-Python lookup
+      # (find_cross_python_executable / resolve_python) derives the target's
+      # Python.h/pyconfig.h include dir and EXT_SUFFIX from the manylinux/
+      # musllinux /opt/python/<tag>/ directory layout instead of executing the
+      # (possibly foreign-architecture, since this image never runs under
+      # QEMU) interpreter, so no target Python needs to actually run.
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
-          manylinux: auto
+          manylinux: ${{ matrix.platform.manylinux }}
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
