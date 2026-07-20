@@ -145,7 +145,7 @@ jobs:
       # slowness this whole matrix was reworked to avoid).
       - name: Install built wheel
         if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
-        run: uv pip install --system --find-links dist --no-index sqlite-rs
+        run: uv pip install --system --find-links dist sqlite-rs
       - name: Install test dependencies
         if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
         run: uv pip install --system pytest
@@ -252,7 +252,7 @@ jobs:
       # ARM64 runner (not emulated), and x86 runs at native speed under
       # WOW64 -- unlike the linux/musllinux cross targets, no QEMU concern.
       - name: Install built wheel
-        run: uv pip install --system --find-links dist --no-index sqlite-rs
+        run: uv pip install --system --find-links dist sqlite-rs
       - name: Install test dependencies
         run: uv pip install --system pytest
       - name: Run tests
@@ -287,7 +287,7 @@ jobs:
       # Both targets run natively here (macos-15-intel is genuinely x86_64,
       # macos-latest is genuinely Apple Silicon), no QEMU concern.
       - name: Install built wheel
-        run: uv pip install --system --find-links dist --no-index sqlite-rs
+        run: uv pip install --system --find-links dist sqlite-rs
       - name: Install test dependencies
         run: uv pip install --system pytest
       - name: Run tests
