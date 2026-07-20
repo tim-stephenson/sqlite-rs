@@ -20,7 +20,6 @@ without serializing/reopening:
 import sys
 from pathlib import Path
 
-from sqlite_rs import sqlite3
 from sqlite_rs._core import get_raw_db_ptr, query_via_raw_pointer, query_via_rust
 
 _LIBSQLITE3_NAMES = {"darwin": "libsqlite3.dylib", "win32": "sqlite3.dll"}
@@ -39,5 +38,4 @@ __all__ = [
     "get_raw_db_ptr",
     "query_via_raw_pointer",
     "query_via_rust",
-    "sqlite3",
 ]

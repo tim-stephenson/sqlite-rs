@@ -19,7 +19,7 @@ same as it already does for the vendored runtime .py files (see
 `LIB_SQLITE3_IMPORT_REWRITES` in build.rs). A MANIFEST recording the
 basedpyright version and upstream typeshed commit is written alongside for
 provenance.
-"""
+"""  # noqa: E501
 
 from __future__ import annotations
 
@@ -29,7 +29,9 @@ from pathlib import Path
 
 import basedpyright
 
-TYPESHED_STDLIB = Path(basedpyright.__file__).parent / "dist" / "typeshed-fallback" / "stdlib"
+TYPESHED_STDLIB = (
+    Path(basedpyright.__file__).parent / "dist" / "typeshed-fallback" / "stdlib"
+)
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor" / "typeshed"
 DEST_STDLIB = VENDOR_DIR / "stdlib"
 MANIFEST_FILE = VENDOR_DIR / "MANIFEST"

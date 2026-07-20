@@ -37,7 +37,7 @@ PRODUCT_LINE = re.compile(
 
 
 def find_amalgamation(version: str) -> tuple[str, int, str]:
-    """Look up (relative_url, size_bytes, sha3_256_hex) for `version`'s amalgamation zip."""
+    """Look up (relative_url, size_bytes, sha3_256_hex) for `version`'s amalgamation zip."""  # noqa: E501
     with urllib.request.urlopen(DOWNLOAD_PAGE) as resp:  # noqa: S310
         page = resp.read().decode("utf-8")
 
@@ -49,8 +49,10 @@ def find_amalgamation(version: str) -> tuple[str, int, str]:
     raise SystemExit(msg)
 
 
-def fetch_and_verify(relative_url: str, expected_size: int, expected_sha3: str) -> bytes:
-    """Download the amalgamation zip and verify its size and SHA3-256 before returning it."""
+def fetch_and_verify(
+    relative_url: str, expected_size: int, expected_sha3: str
+) -> bytes:
+    """Download the amalgamation zip and verify its size and SHA3-256 before returning it."""  # noqa: E501
     url = f"https://www.sqlite.org/{relative_url}"
     with urllib.request.urlopen(url) as resp:  # noqa: S310
         data = resp.read()
@@ -68,7 +70,7 @@ def fetch_and_verify(relative_url: str, expected_size: int, expected_sha3: str) 
 
 
 def unpack(data: bytes) -> None:
-    """Extract sqlite3.c/sqlite3.h/sqlite3ext.h from the amalgamation zip into VENDOR_DIR."""
+    """Extract sqlite3.c/sqlite3.h/sqlite3ext.h from the amalgamation zip into VENDOR_DIR."""  # noqa: E501
     VENDOR_DIR.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         for member in zf.namelist():
@@ -79,10 +81,10 @@ def unpack(data: bytes) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    _ = parser.add_argument(
         "version",
         nargs="?",
-        help="SQLite version to vendor, e.g. 3.53.3. Defaults to the version in VERSION.",
+        help="SQLite version to vendor, e.g. 3.53.3. Defaults to the version in VERSION.",  # noqa: E501
     )
     args = parser.parse_args()
 

@@ -49,7 +49,12 @@ SUBTREES = [
 
 def api_get(url: str) -> object:
     """GET a GitHub API URL and return the parsed JSON body."""
-    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})  # noqa: S310
+    if not url.startswith(("http:", "https:")):
+        msg = "URL must start with 'http:' or 'https:'"
+        raise ValueError(msg)
+    request = urllib.request.Request(  # noqa: S310
+        url, headers={"Accept": "application/vnd.github+json"}
+    )
     with urllib.request.urlopen(request) as resp:  # noqa: S310
         return json.loads(resp.read())
 
@@ -77,7 +82,9 @@ def download_tree(ref: str, subpath: str, dest: Path, keep: set[str] | None) -> 
     Recurses into subdirectories unconditionally; `keep`, if given, filters
     which *files* (not directories) at this level are downloaded.
     """
-    entries = api_get(f"https://api.github.com/repos/{REPO}/contents/{subpath}?ref={ref}")
+    entries = api_get(
+        f"https://api.github.com/repos/{REPO}/contents/{subpath}?ref={ref}"
+    )
     dest.mkdir(parents=True, exist_ok=True)
     for entry in entries:
         if entry["type"] == "dir":
@@ -97,7 +104,7 @@ def main() -> None:
     parser.add_argument(
         "version",
         nargs="?",
-        help="CPython version to vendor, e.g. 3.14.3. Defaults to the version in VERSION.",
+        help="CPython version to vendor, e.g. 3.14.3. Defaults to the version in VERSION.",  # noqa: E501
     )
     args = parser.parse_args()
 

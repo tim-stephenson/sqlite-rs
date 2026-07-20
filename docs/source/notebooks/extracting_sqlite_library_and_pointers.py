@@ -10,10 +10,10 @@ def _():
     import sqlite3
     import sys
 
-    import marimo as mo
     import sqlite_rs
+    import sqlite_rs._sqlite3
 
-    return ctypes, mo, sqlite3, sqlite_rs, sys
+    return ctypes, sqlite3, sqlite_rs, sys
 
 
 @app.cell
@@ -44,7 +44,7 @@ def _(sqlite_rs):
     import sqlite_rs.sqlite3._sqlite3
     import sqlite_rs.sqlite3.dbapi2
 
-    (sqlite_rs.sqlite3, sqlite_rs.sqlite3.dbapi2, sqlite_rs.sqlite3._sqlite3)
+    (sqlite_rs.sqlite3, sqlite_rs.sqlite3.dbapi2, sqlite_rs.sqlite3._sqlite3)  # noqa: SLF001
     return
 
 

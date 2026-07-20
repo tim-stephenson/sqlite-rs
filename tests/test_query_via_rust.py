@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 import sqlite_rs
+import sqlite_rs.sqlite3
 
 # int (*callback)(void*, int, char**, char**) -- sqlite3_exec's row callback shape.
 _EXEC_CALLBACK_T = ctypes.CFUNCTYPE(
@@ -24,8 +25,8 @@ _EXEC_CALLBACK_T = ctypes.CFUNCTYPE(
 
 def test_query_via_rust_reads_rows_written_via_the_clone_module() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
-    conn.execute("CREATE TABLE t (a INTEGER, b TEXT, c REAL)")
-    conn.execute("INSERT INTO t VALUES (1, ?, 3.5)", ("hello",))
+    _ = conn.execute("CREATE TABLE t (a INTEGER, b TEXT, c REAL)")
+    _ = conn.execute("INSERT INTO t VALUES (1, ?, 3.5)", ("hello",))
     conn.commit()
 
     assert sqlite_rs.query_via_rust(conn, "SELECT * FROM t") == [[1, "hello", 3.5]]
@@ -33,9 +34,9 @@ def test_query_via_rust_reads_rows_written_via_the_clone_module() -> None:
 
 def test_query_via_rust_writes_are_visible_via_the_clone_module() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
-    conn.execute("CREATE TABLE t (a INTEGER)")
+    _ = conn.execute("CREATE TABLE t (a INTEGER)")
 
-    sqlite_rs.query_via_rust(conn, "INSERT INTO t VALUES (42)")
+    _ = sqlite_rs.query_via_rust(conn, "INSERT INTO t VALUES (42)")
 
     assert conn.execute("SELECT * FROM t").fetchall() == [(42,)]
 
@@ -44,14 +45,14 @@ def test_query_via_rust_rejects_stdlib_sqlite3_connection() -> None:
     stdlib_conn = sqlite3.connect(":memory:")
 
     with pytest.raises(TypeError, match=r"sqlite_rs\.sqlite3\.connect"):
-        sqlite_rs.query_via_rust(stdlib_conn, "SELECT 1")
+        _ = sqlite_rs.query_via_rust(stdlib_conn, "SELECT 1")
 
 
 def test_query_via_rust_reports_sql_errors() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
 
     with pytest.raises(ValueError, match="no such table"):
-        sqlite_rs.query_via_rust(conn, "SELECT * FROM nonexistent")
+        _ = sqlite_rs.query_via_rust(conn, "SELECT * FROM nonexistent")
 
 
 @pytest.fixture
@@ -153,7 +154,7 @@ def test_connection_opened_via_ctypes_is_usable_via_the_sqlite_rs_api(
 
 
 def test_sqlite_rs_connection_is_usable_via_ctypes(libsqlite3: ctypes.CDLL) -> None:
-    """A connection opened via sqlite_rs.sqlite3.connect() can be driven directly by ctypes.
+    """A connection opened w/ sqlite_rs.sqlite3.connect() driven directly by ctypes.
 
     The mirror image of the previous test: proves `get_raw_db_ptr` hands out a
     pointer any FFI caller can act on, not just sqlite_rs's own Rust extension.

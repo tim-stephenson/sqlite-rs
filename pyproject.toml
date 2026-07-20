@@ -32,11 +32,15 @@ dev = [
     "basedpyright",
 ]
 
+[tool.ruff]
+extend-exclude = ["vendor"]
+
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
     "COM812",
     "D100",
+    "EXE001",
 ]
 
 [tool.ruff.lint.pydocstyle]
@@ -46,6 +50,7 @@ convention = "numpy"
 "docs/**/*.py" = ["INP001", "D103"]
 "docs/source/notebooks/*.py" = ["ANN001", "ANN202", "B018", "PLC0415", "PLR1711"]
 "tests/**/*.py" = ["S101", "D103", "INP001"]
+"scripts/**/*.py" = ["T201", "D103"]
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
