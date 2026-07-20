@@ -11,7 +11,6 @@ def _():
     import sys
 
     import sqlite_rs
-    import sqlite_rs._sqlite3
     import sqlite_rs.sqlite3._sqlite3
     import sqlite_rs.sqlite3.dbapi2
 

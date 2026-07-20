@@ -45,7 +45,11 @@ def test_query_via_rust_rejects_stdlib_sqlite3_connection() -> None:
     stdlib_conn = sqlite3.connect(":memory:")
 
     with pytest.raises(TypeError, match=r"sqlite_rs\.sqlite3\.connect"):
-        _ = sqlite_rs.query_via_rust(stdlib_conn, "SELECT 1")
+        # Passing the wrong Connection type is exactly what's under test here.
+        _ = sqlite_rs.query_via_rust(
+            stdlib_conn,  # pyright: ignore[reportArgumentType]
+            "SELECT 1",
+        )
 
 
 def test_query_via_rust_reports_sql_errors() -> None:
@@ -89,7 +93,7 @@ def _ctypes_exec_rows(
     rows: list[tuple[str, ...]] = []
 
     def collect_row(
-        _ctx: object, n: int, values: ctypes.Array, _columns: object
+        _ctx: object, n: int, values: ctypes.Array[ctypes.c_char_p], _columns: object
     ) -> int:
         rows.append(tuple(values[i].decode() for i in range(n)))
         return 0

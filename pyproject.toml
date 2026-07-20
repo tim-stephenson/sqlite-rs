@@ -56,3 +56,15 @@ convention = "numpy"
 features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "sqlite_rs._core"
+
+[tool.basedpyright]
+exclude = [
+    # basedpyright's built-in defaults (dot-dirs, __pycache__, venvPath) --
+    # listing our own "exclude" below replaces rather than extends them.
+    ".venv",
+    "**/__pycache__",
+    "target",
+    "vendor",
+    # build.rs-materialized copy of vendor/cpython/Lib/sqlite3/.
+    "python/sqlite_rs/sqlite3",
+]

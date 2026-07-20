@@ -33,6 +33,7 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
+from typing import cast
 
 REPO = "python/cpython"
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "vendor" / "cpython"
@@ -62,7 +63,7 @@ def api_get(url: str) -> object:
 def resolve_commit(tag: str) -> str:
     """Resolve a tag (or any ref) to the commit SHA it points at."""
     data = api_get(f"https://api.github.com/repos/{REPO}/commits/{tag}")
-    return data["sha"]
+    return cast("dict[str, str]", data)["sha"]
 
 
 def clear_dir(dest: Path) -> None:
@@ -86,7 +87,7 @@ def download_tree(ref: str, subpath: str, dest: Path, keep: set[str] | None) -> 
         f"https://api.github.com/repos/{REPO}/contents/{subpath}?ref={ref}"
     )
     dest.mkdir(parents=True, exist_ok=True)
-    for entry in entries:
+    for entry in cast("list[dict[str, str]]", entries):
         if entry["type"] == "dir":
             download_tree(ref, entry["path"], dest / entry["name"], keep=None)
         elif entry["type"] == "file":
