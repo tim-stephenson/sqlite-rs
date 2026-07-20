@@ -121,6 +121,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
+      - uses: astral-sh/setup-uv@v7
       # These `manylinux:` values pick maturin-action's fast, natively-running
       # `*-cross` images (e.g. ghcr.io/rust-cross/manylinux_2_28-cross:s390x)
       # for non-x86 targets: a glibc x86_64 host with a cross-gcc bolted on, no
@@ -138,6 +139,19 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
           container: ${{ matrix.platform.container }}
+      # Only x86_64/x86 run on this same CPU natively -- aarch64/s390x/
+      # ppc64le/armv7/riscv64 are built via cross-gcc for a CPU this runner
+      # can't execute at all, so testing them here would need QEMU (the
+      # slowness this whole matrix was reworked to avoid).
+      - name: Install built wheel
+        if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
+        run: uv pip install --system --find-links dist --no-index sqlite-rs
+      - name: Install test dependencies
+        if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
+        run: uv pip install --system pytest
+      - name: Run tests
+        if: matrix.platform.target == 'x86_64' || matrix.platform.target == 'x86'
+        run: pytest tests/
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -194,6 +208,12 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
           container: ghcr.io/rust-cross/musllinux_1_2-cross:${{ matrix.platform.cross_arch }}
+      # No test step here (unlike the linux job): these wheels are tagged
+      # musllinux_1_2_* for musl libc (Alpine) systems, but this runner is a
+      # standard glibc Ubuntu host -- pip would refuse to install them at all
+      # (incompatible platform tag), regardless of matching CPU architecture.
+      # Testing these properly would need a musl/Alpine container step, which
+      # is a separate follow-up, not a "native, no extra infra" test.
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -221,12 +241,22 @@ jobs:
         with:
           python-version: "3.x"
           architecture: ${{ matrix.platform.python_arch }}
+      - uses: astral-sh/setup-uv@v7
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      # All three targets run natively here: windows-11-arm is a genuine
+      # ARM64 runner (not emulated), and x86 runs at native speed under
+      # WOW64 -- unlike the linux/musllinux cross targets, no QEMU concern.
+      - name: Install built wheel
+        run: uv pip install --system --find-links dist --no-index sqlite-rs
+      - name: Install test dependencies
+        run: uv pip install --system pytest
+      - name: Run tests
+        run: pytest tests/
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -247,12 +277,21 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
+      - uses: astral-sh/setup-uv@v7
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      # Both targets run natively here (macos-15-intel is genuinely x86_64,
+      # macos-latest is genuinely Apple Silicon), no QEMU concern.
+      - name: Install built wheel
+        run: uv pip install --system --find-links dist --no-index sqlite-rs
+      - name: Install test dependencies
+        run: uv pip install --system pytest
+      - name: Run tests
+        run: pytest tests/
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
