@@ -20,6 +20,10 @@ dynamic = ["version"]
 
 
 [dependency-groups]
+test = [
+    "pytest",
+    "pywin32; sys_platform == 'win32'",
+]
 dev = [
     "maturin",
     "marimo",
@@ -28,8 +32,8 @@ dev = [
     "pydata-sphinx-theme",
     "sphinx-autobuild",
     "myst-parser",
-    "pytest",
     "basedpyright",
+    {include-group = "test"},
 ]
 
 [tool.ruff]
