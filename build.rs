@@ -7,6 +7,14 @@ fn manifest_dir() -> PathBuf {
     PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
 }
 
+/// Cargo's own build-script scratch directory -- always set for build
+/// scripts, never shipped in the wheel. Used as the destination for Windows
+/// import libraries (`.lib`), which are build-time-only linker input with no
+/// runtime purpose, unlike Unix shared objects which need no such file.
+fn cargo_out_dir() -> PathBuf {
+    PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set (must run inside a build script)"))
+}
+
 fn target_os() -> String {
     env::var("CARGO_CFG_TARGET_OS").unwrap()
 }
@@ -26,7 +34,8 @@ fn shared_lib_name(name: &str) -> String {
 /// against, so a live `sqlite3*` connection can be passed safely between
 /// them (see the plan doc / native/sqlite_rs_shim.c for why).
 fn build_libsqlite3(sqlite_dir: &Path, out_dir: &Path) -> PathBuf {
-    let objects = cc::Build::new()
+    let mut build = cc::Build::new();
+    build
         .file(sqlite_dir.join("sqlite3.c"))
         .include(sqlite_dir)
         .pic(true)
@@ -34,8 +43,14 @@ fn build_libsqlite3(sqlite_dir: &Path, out_dir: &Path) -> PathBuf {
         .define("SQLITE_ENABLE_FTS5", None)
         .define("SQLITE_ENABLE_RTREE", None)
         .define("SQLITE_ENABLE_COLUMN_METADATA", None)
-        .define("SQLITE_ENABLE_DBSTAT_VTAB", None)
-        .compile_intermediates();
+        .define("SQLITE_ENABLE_DBSTAT_VTAB", None);
+    if target_os() == "windows" {
+        // SQLite's own upstream convention for building sqlite3.dll (see its
+        // Makefile.msc): SQLITE_API defaults to empty (vendor/sqlite/sqlite3.h),
+        // so nothing is exported from a Windows DLL at all unless told to be.
+        build.define("SQLITE_API", Some("__declspec(dllexport)"));
+    }
+    let objects = build.compile_intermediates();
     assert!(!objects.is_empty(), "cc produced no object files for sqlite3.c");
 
     let lib_name = shared_lib_name("sqlite3");
@@ -47,19 +62,26 @@ fn build_libsqlite3(sqlite_dir: &Path, out_dir: &Path) -> PathBuf {
         "macos" => {
             cmd.arg("-dynamiclib");
             cmd.arg("-install_name").arg(format!("@rpath/{lib_name}"));
+            cmd.arg("-o").arg(&out_path);
         }
         "windows" => {
-            panic!(
-                "Windows build of libsqlite3 is not yet supported (see plan follow-ups); \
-                 phase 1 targets macOS + Linux x86_64 only"
-            );
+            // Unlike Unix, the import library (.lib) produced alongside the
+            // DLL is build-time-only linker input with no runtime purpose --
+            // keep it out of python/sqlite_rs/ (out_dir here; ships verbatim
+            // in the wheel) by writing it into Cargo's own OUT_DIR instead.
+            let implib = cargo_out_dir().join("sqlite3.lib");
+            cmd.arg("/link");
+            cmd.arg("/nologo");
+            cmd.arg("/DLL");
+            cmd.arg(format!("/OUT:{}", out_path.display()));
+            cmd.arg(format!("/IMPLIB:{}", implib.display()));
         }
         _ => {
             cmd.arg("-shared");
             cmd.arg(format!("-Wl,-soname,{lib_name}"));
+            cmd.arg("-o").arg(&out_path);
         }
     }
-    cmd.arg("-o").arg(&out_path);
 
     let status = cmd.status().expect("failed to invoke linker for libsqlite3");
     assert!(status.success(), "linking {lib_name} failed: {cmd:?}");
@@ -371,27 +393,50 @@ fn build_sqlite_clone_module(
 
     let mut cmd: Command = cc::Build::new().get_compiler().to_command();
     cmd.args(&objects);
-    cmd.arg(format!("-L{}", libsqlite3_dir.display()));
-    cmd.arg("-lsqlite3");
     match target_os().as_str() {
         "macos" => {
+            cmd.arg(format!("-L{}", libsqlite3_dir.display()));
+            cmd.arg("-lsqlite3");
             cmd.arg("-dynamiclib");
             cmd.arg("-undefined").arg("dynamic_lookup");
             // One level up: python/sqlite_rs/sqlite3/_sqlite3.so -> ../libsqlite3.dylib
             cmd.arg("-Wl,-rpath,@loader_path/..");
+            cmd.arg("-o").arg(&out_path);
         }
         "windows" => {
-            panic!(
-                "Windows build of the sqlite3 clone module is not yet supported \
-                 (see plan follow-ups); phase 1 targets macOS + Linux x86_64 only"
-            );
+            // Unlike Unix (where an extension module may leave Py* symbols
+            // unresolved until the loading process supplies them at
+            // runtime), Windows PE requires every imported symbol to
+            // resolve at link time -- link directly against the target
+            // interpreter's own import library via the same
+            // pyo3_build_config mechanism PyO3 itself already uses
+            // internally (already queried above for include_dir/ext_suffix),
+            // plus the sqlite3.lib import library build_libsqlite3 placed in
+            // Cargo's OUT_DIR.
+            let config = pyo3_build_config::get();
+            let python_lib_dir =
+                config.lib_dir().unwrap_or_else(|| panic!("pyo3_build_config has no lib_dir() for this target"));
+            let python_lib_name =
+                config.lib_name().unwrap_or_else(|| panic!("pyo3_build_config has no lib_name() for this target"));
+            let implib = cargo_out_dir().join("_sqlite3.lib");
+            cmd.arg("/link");
+            cmd.arg("/nologo");
+            cmd.arg("/DLL");
+            cmd.arg(format!("/LIBPATH:{}", cargo_out_dir().display()));
+            cmd.arg("sqlite3.lib");
+            cmd.arg(format!("/LIBPATH:{python_lib_dir}"));
+            cmd.arg(format!("{python_lib_name}.lib"));
+            cmd.arg(format!("/OUT:{}", out_path.display()));
+            cmd.arg(format!("/IMPLIB:{}", implib.display()));
         }
         _ => {
+            cmd.arg(format!("-L{}", libsqlite3_dir.display()));
+            cmd.arg("-lsqlite3");
             cmd.arg("-shared");
             cmd.arg("-Wl,-rpath,$ORIGIN/..");
+            cmd.arg("-o").arg(&out_path);
         }
     }
-    cmd.arg("-o").arg(&out_path);
 
     let status = cmd.status().expect("failed to invoke linker for the sqlite3 clone module");
     assert!(status.success(), "linking the sqlite3 clone module failed: {cmd:?}");
@@ -480,13 +525,21 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
         .compile("sqlite_rs_shim");
 
     println!("cargo:rustc-link-search=native={}", libsqlite3_dir.display());
+    if target_os() == "windows" {
+        // The Windows import library (sqlite3.lib) build_libsqlite3 produces
+        // lives in Cargo's own OUT_DIR, not libsqlite3_dir (python/sqlite_rs/,
+        // which ships verbatim in the wheel and must only contain runtime
+        // artifacts) -- add it as a second search path.
+        println!("cargo:rustc-link-search=native={}", cargo_out_dir().display());
+    }
     println!("cargo:rustc-link-lib=dylib=sqlite3");
     match target_os().as_str() {
         "macos" => println!("cargo:rustc-cdylib-link-arg=-Wl,-rpath,@loader_path"),
-        "windows" => panic!(
-            "Windows build of _core's sqlite3 link step is not yet supported \
-             (see plan follow-ups); phase 1 targets macOS + Linux x86_64 only"
-        ),
+        // Windows' default DLL search order already checks the directory of
+        // the loading module (_core.pyd) first, where libsqlite3's renamed
+        // sqlite3.dll also lives (see Python/dynload_win.c's
+        // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR) -- no rpath-equivalent flag needed.
+        "windows" => {}
         _ => println!("cargo:rustc-cdylib-link-arg=-Wl,-rpath,$ORIGIN"),
     }
 }

@@ -20,6 +20,19 @@ without serializing/reopening:
 import sys
 from pathlib import Path
 
+if sys.platform == "win32":
+    import os
+
+    # Windows only adds a loading DLL's own directory to its dependency
+    # search (see Python/dynload_win.c's LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR),
+    # not that directory's parent -- unlike @loader_path/$ORIGIN on
+    # macOS/Linux, there's no relative-path traversal at the PE/link level.
+    # sqlite_rs.sqlite3._sqlite3 (one directory below this file) needs this
+    # directory added explicitly to find libsqlite3's renamed sqlite3.dll;
+    # _core (same directory) doesn't strictly need it but this is harmless
+    # defense-in-depth for it too. Must run before any native import below.
+    os.add_dll_directory(str(Path(__file__).parent))
+
 from sqlite_rs._core import (
     get_raw_db_ptr,  # pyright: ignore[reportUnknownVariableType]
     query_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
