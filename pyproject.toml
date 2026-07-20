@@ -56,6 +56,21 @@ convention = "numpy"
 features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "sqlite_rs._core"
+# maturin's default wheel packaging uses `git ls-files` to decide what to
+# include from python-source, so it respects .gitignore -- but build.rs
+# materializes sqlite_rs/sqlite3/ (the CPython clone module) and the bundled
+# libsqlite3 shared library at build time, and both are gitignored (they're
+# generated, not source). Without forcing them back in, wheels silently ship
+# without sqlite_rs.sqlite3 at all. shared_lib_name() in build.rs names the
+# library sqlite3.dll on Windows (no "lib" prefix, matching upstream SQLite's
+# own convention) but libsqlite3.{so,dylib} elsewhere, so list all three
+# rather than one glob that would miss the Windows case.
+include = [
+    "python/sqlite_rs/sqlite3/**/*",
+    "python/sqlite_rs/libsqlite3.so",
+    "python/sqlite_rs/libsqlite3.dylib",
+    "python/sqlite_rs/sqlite3.dll",
+]
 
 [tool.basedpyright]
 exclude = [
