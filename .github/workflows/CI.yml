@@ -515,18 +515,21 @@ jobs:
   # a matrix dimension onto the build step itself, which already builds
   # every version in one maturin invocation via --find-interpreter.
   #
-  # allow-prereleases: true everywhere here: 3.15/3.15t are still pre-release
-  # upstream (this project already vendors 3.15.0b4), so actions/setup-python
-  # needs it to resolve them to a real installable build rather than
-  # erroring outright with none found.
+  # 3.15/3.15t/pypy3.11 are built (see the linux job above) but deliberately
+  # not tested here: pyarrow (a sqlite-rs runtime dependency, kept even
+  # though nothing in the codebase uses it yet -- it's needed soon) has no
+  # prebuilt wheel for any of the three, and fails building from source for
+  # each (PyPy: missing Arrow C++ toolchain; 3.15/3.15t: a libcst build
+  # dependency's own PyO3 version doesn't recognize either yet) -- confirmed
+  # in CI, an upstream availability gap rather than anything sqlite-rs or
+  # this workflow can fix.
   test-linux-x86_64:
     needs: linux
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
-        python-version:
-          ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t", "pypy3.11"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -536,7 +539,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -547,15 +549,17 @@ jobs:
 
   # manylinux_2_28_aarch64's /opt/python has the same interpreter set as the
   # manylinux-cross images the linux job's other targets use (confirmed from
-  # this job's own build log), so the same full Python-version list applies.
+  # this job's own build log), so the same Python-version list applies --
+  # see the matching comment on test-linux-x86_64 for why 3.15/3.15t/
+  # pypy3.11 are built but not tested (pyarrow has no wheel and can't build
+  # from source for any of the three).
   test-linux-aarch64:
     needs: linux-aarch64
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
-        python-version:
-          ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t", "pypy3.11"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -565,7 +569,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -574,20 +577,17 @@ jobs:
       - name: Run tests
         run: pytest tests/
 
-  # macOS's build job relies on --find-interpreter finding whatever's already
-  # on the runner image instead of a manylinux-style /opt/python tree, which
-  # in practice (confirmed from its own build log) is only 3.11-3.14 -- no
-  # 3.10, no PyPy -- plus 3.15 and the two free-threaded builds (3.14t/3.15t)
-  # that job's own extra setup-python steps now provision. Narrower list
-  # than Linux's on purpose (no 3.10/PyPy), matching what's actually built,
-  # not aspirational.
+  # macOS's build job builds 3.10-3.15 and the two free-threaded builds
+  # (3.14t/3.15t), but 3.15/3.15t aren't tested here -- see the matching
+  # comment on test-linux-x86_64: pyarrow has no wheel and can't build from
+  # source for either.
   test-macos-x86_64:
     needs: macos
     runs-on: macos-15-intel
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -597,7 +597,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -612,7 +611,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -622,7 +621,6 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -631,17 +629,15 @@ jobs:
       - name: Run tests
         run: pytest tests/
 
-  # Same story as macOS: windows's build job's --find-interpreter only found
-  # 3.10-3.14 on this runner image (confirmed from its own build log) -- no
-  # PyPy -- plus 3.15 and the two free-threaded builds (3.14t/3.15t) that
-  # job's own extra setup-python steps now provision.
+  # Same story as macOS: windows's build job builds 3.10-3.15/3.14t/3.15t,
+  # but 3.15/3.15t aren't tested here for the same pyarrow reason.
   test-windows-x64:
     needs: windows
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -652,7 +648,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           architecture: x64
-          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
