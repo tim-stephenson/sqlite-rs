@@ -625,6 +625,22 @@ fn main() {
     );
     println!("cargo:rerun-if-changed={}", sqlite3_pkg_dir.join("__init__.py").display());
 
+    // Wipe any previous build's output before writing this one's: nothing
+    // here ever removes stale files on its own, only overwrites specific
+    // known names, so a directory that's built for e.g. cp310 and then
+    // cp311 without cleaning in between ends up with *both* interpreters'
+    // _sqlite3*.so (and any __pycache__ left by actually importing the
+    // module, e.g. during pytest) still sitting there when the second
+    // wheel gets packaged -- confirmed in practice: maturin builds every
+    // target interpreter in one process via --find-interpreter/multiple -i
+    // flags (exactly what every CI job here does), calling build.rs fresh
+    // each time but never cleaning this directory between those calls, so
+    // by the last interpreter every previous one's binary was still being
+    // packaged into that interpreter's own wheel.
+    if sqlite3_pkg_dir.exists() {
+        fs::remove_dir_all(&sqlite3_pkg_dir)
+            .unwrap_or_else(|e| panic!("failed to clear stale {}: {e}", sqlite3_pkg_dir.display()));
+    }
     fs::create_dir_all(&sqlite3_pkg_dir)
         .unwrap_or_else(|e| panic!("failed to create {}: {e}", sqlite3_pkg_dir.display()));
 
