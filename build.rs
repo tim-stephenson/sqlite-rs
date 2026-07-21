@@ -405,6 +405,18 @@ fn build_sqlite_clone_module(
         // unlike the host gcc used for x86_64/i686. Pin it explicitly instead
         // of relying on a compiler default that varies per target.
         .std("c11")
+        // PyPy's cpyext headers don't declare a couple of CPython-internal
+        // functions this vendored source calls (PySys_Audit,
+        // _PyErr_ChainExceptions) -- harmless under older GCC (an implicit
+        // extern declaration, just a warning), but GCC 14+ promotes
+        // -Wimplicit-function-declaration to a hard error by default. Hit in
+        // practice building PyPy 3.11 against quay.io/pypa/manylinux_2_28_aarch64
+        // (newer GCC) when ghcr.io/rust-cross/manylinux_2_28-cross:aarch64
+        // (older GCC) had built the exact same source without issue. These
+        // symbols still need to resolve at dynamic-link time against
+        // whichever PyPy is actually running -- this only restores the old
+        // compile-time behavior, it doesn't change that runtime contract.
+        .flag_if_supported("-Wno-error=implicit-function-declaration")
         .compile_intermediates();
     assert!(!objects.is_empty(), "cc produced no object files for the sqlite3 clone module");
 
