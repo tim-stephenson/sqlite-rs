@@ -298,41 +298,103 @@ jobs:
             python_arch: arm64
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      # Explicit -i list of exact interpreter paths below, instead of
+      # --find-interpreter, because of a real collision hit in CI: once both
+      # a regular and a free-threaded build of the same X.Y version were
+      # installed (e.g. plain "3.14" and "3.14t"), --find-interpreter only
+      # ever found the free-threaded one -- confirmed from build logs, this
+      # runner's actions/setup-python evidently registers a free-threaded
+      # install in a way that shadows the regular one of the same version,
+      # so plain "CPython 3.14"/"3.15" silently vanished from what got
+      # built. update-environment: false on every step below keeps each
+      # install from touching PATH/registry at all, so only the explicit -i
+      # paths (captured via each step's own python-path output) matter --
+      # no discovery, no shadowing, no dependence on install order.
+      #
+      # 3.10 is skipped on windows-11-arm: CPython's official Windows ARM64
+      # installers only started at 3.11 (there is no 3.10 arm64 build to
+      # install at all), so that one step is allowed to fail there without
+      # failing the job.
+      - id: py310
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.x"
+          python-version: "3.10"
           architecture: ${{ matrix.platform.python_arch }}
-      # --find-interpreter only discovers interpreters actually present on
-      # this runner -- unlike the Linux manylinux/musllinux images, which
-      # bundle a whole /opt/python tree, this runner image only preinstalls
-      # standard CPython up to whatever "3.x" resolves to. These extra
-      # setup-python calls register 3.15 (still pre-release upstream, hence
-      # allow-prereleases) and the free-threaded builds (matching the linux
-      # job's 3.14t/3.15t -- no 3.13t, since upstream doesn't publish one
-      # either) so --find-interpreter actually finds them by name below;
-      # they don't need to stay the "active" python afterward, maturin looks
-      # each one up by its own pythonX.Y[t] name regardless of which is
-      # first on PATH.
-      - uses: actions/setup-python@v6
+          update-environment: false
+        continue-on-error: ${{ matrix.platform.target == 'aarch64' }}
+      - id: py311
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          architecture: ${{ matrix.platform.python_arch }}
+          update-environment: false
+      - id: py312
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.platform.python_arch }}
+          update-environment: false
+      - id: py313
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          architecture: ${{ matrix.platform.python_arch }}
+          update-environment: false
+      - id: py314
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          architecture: ${{ matrix.platform.python_arch }}
+          update-environment: false
+      - id: py315
+        uses: actions/setup-python@v6
         with:
           python-version: "3.15"
           architecture: ${{ matrix.platform.python_arch }}
           allow-prereleases: true
-      - uses: actions/setup-python@v6
+          update-environment: false
+      - id: py314t
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14t"
           architecture: ${{ matrix.platform.python_arch }}
-      - uses: actions/setup-python@v6
+          update-environment: false
+      - id: py315t
+        uses: actions/setup-python@v6
         with:
           python-version: "3.15t"
           architecture: ${{ matrix.platform.python_arch }}
           allow-prereleases: true
+          update-environment: false
       - uses: astral-sh/setup-uv@v7
+      # Builds the -i list from each setup-python step's own python-path
+      # output, skipping any that didn't run/install (empty output) -- e.g.
+      # 3.10 on windows-11-arm above -- rather than passing maturin a
+      # literal "-i" with nothing after it.
+      - name: Compute interpreter list
+        id: interpreters
+        shell: bash
+        run: |
+          args="--release --out dist"
+          for p in \
+            "${{ steps.py310.outputs.python-path }}" \
+            "${{ steps.py311.outputs.python-path }}" \
+            "${{ steps.py312.outputs.python-path }}" \
+            "${{ steps.py313.outputs.python-path }}" \
+            "${{ steps.py314.outputs.python-path }}" \
+            "${{ steps.py315.outputs.python-path }}" \
+            "${{ steps.py314t.outputs.python-path }}" \
+            "${{ steps.py315t.outputs.python-path }}"; do
+            if [ -n "$p" ]; then
+              args="$args -i $p"
+            fi
+          done
+          echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
+          args: ${{ steps.interpreters.outputs.args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # All three targets run natively here (windows-11-arm is a genuine
       # ARM64 runner, not emulated, and x86 runs at native speed under
@@ -358,31 +420,81 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      # See the matching comment in the windows job: explicit -i list of
+      # exact interpreter paths, not --find-interpreter, because installing
+      # both a regular and free-threaded build of the same X.Y version (e.g.
+      # "3.14"/"3.14t") made --find-interpreter only ever find the
+      # free-threaded one, silently dropping plain "CPython 3.14"/"3.15"
+      # from what got built (confirmed from build logs). update-environment:
+      # false keeps every install below from touching PATH at all, so only
+      # the explicit -i paths (each step's own python-path output) matter.
+      - id: py310
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.x"
-      # See the matching comment in the windows job: this runner image only
-      # preinstalls standard CPython up to whatever "3.x" resolves to, so
-      # these extra setup-python calls register 3.15 and the free-threaded
-      # builds (matching linux's 3.15/3.14t/3.15t) for --find-interpreter to
-      # discover by name below.
-      - uses: actions/setup-python@v6
+          python-version: "3.10"
+          update-environment: false
+      - id: py311
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          update-environment: false
+      - id: py312
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          update-environment: false
+      - id: py313
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          update-environment: false
+      - id: py314
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          update-environment: false
+      - id: py315
+        uses: actions/setup-python@v6
         with:
           python-version: "3.15"
           allow-prereleases: true
-      - uses: actions/setup-python@v6
+          update-environment: false
+      - id: py314t
+        uses: actions/setup-python@v6
         with:
           python-version: "3.14t"
-      - uses: actions/setup-python@v6
+          update-environment: false
+      - id: py315t
+        uses: actions/setup-python@v6
         with:
           python-version: "3.15t"
           allow-prereleases: true
+          update-environment: false
       - uses: astral-sh/setup-uv@v7
+      - name: Compute interpreter list
+        id: interpreters
+        shell: bash
+        run: |
+          args="--release --out dist"
+          for p in \
+            "${{ steps.py310.outputs.python-path }}" \
+            "${{ steps.py311.outputs.python-path }}" \
+            "${{ steps.py312.outputs.python-path }}" \
+            "${{ steps.py313.outputs.python-path }}" \
+            "${{ steps.py314.outputs.python-path }}" \
+            "${{ steps.py315.outputs.python-path }}" \
+            "${{ steps.py314t.outputs.python-path }}" \
+            "${{ steps.py315t.outputs.python-path }}"; do
+            if [ -n "$p" ]; then
+              args="$args -i $p"
+            fi
+          done
+          echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --find-interpreter
+          args: ${{ steps.interpreters.outputs.args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # Both targets run natively here (macos-15-intel is genuinely x86_64,
       # macos-latest is genuinely Apple Silicon), no QEMU concern. Tested in
