@@ -63,7 +63,10 @@ def test_query_via_rust_reports_sql_errors() -> None:
 def libsqlite3() -> ctypes.CDLL:
     """Load the bundled libsqlite3 (sqlite_rs.LIBSQLITE3_PATH) via ctypes."""
     assert sqlite_rs.LIBSQLITE3_PATH.exists()
-    lib = ctypes.CDLL(sqlite_rs.LIBSQLITE3_PATH)
+    # str(), not the bare Path: ctypes.CDLL on Windows Python 3.10/3.11 raises
+    # "argument of type 'WindowsPath' is not iterable" for a PathLike name --
+    # fixed in 3.12+, but this project supports 3.10+ (confirmed via CI).
+    lib = ctypes.CDLL(str(sqlite_rs.LIBSQLITE3_PATH))
 
     lib.sqlite3_libversion.argtypes = []
     lib.sqlite3_libversion.restype = ctypes.c_char_p

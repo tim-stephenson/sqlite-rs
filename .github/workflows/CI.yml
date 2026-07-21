@@ -630,14 +630,19 @@ jobs:
         run: pytest tests/
 
   # Same story as macOS: windows's build job builds 3.10-3.15/3.14t/3.15t,
-  # but 3.15/3.15t aren't tested here for the same pyarrow reason.
+  # but 3.15/3.15t aren't tested here for the same pyarrow reason. 3.14t is
+  # also excluded here specifically (still tested on linux/macos): the test
+  # dependency group's pywin32 -- needed only on win32 -- has no free-
+  # threaded wheel for any CPython version yet (confirmed in CI: "no wheels
+  # ... with Python ABI tags: cp39, cp310, cp311, cp312, cp313, cp314,
+  # cp315" -- no cp314t/cp315t).
   test-windows-x64:
     needs: windows
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7

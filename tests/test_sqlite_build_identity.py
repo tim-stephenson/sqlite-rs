@@ -52,7 +52,10 @@ def _core_facts() -> tuple[str, str, set[str]]:
 
 
 def _ctypes_facts() -> tuple[str, str, set[str]]:
-    lib = ctypes.CDLL(sqlite_rs.LIBSQLITE3_PATH)
+    # str(), not the bare Path: see the matching comment in
+    # test_query_via_rust.py's libsqlite3 fixture -- ctypes.CDLL on Windows
+    # Python 3.10/3.11 rejects a PathLike name outright.
+    lib = ctypes.CDLL(str(sqlite_rs.LIBSQLITE3_PATH))
 
     lib.sqlite3_libversion.argtypes = []
     lib.sqlite3_libversion.restype = ctypes.c_char_p
