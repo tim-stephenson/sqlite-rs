@@ -8,6 +8,12 @@ description = ""
 authors = [
     { name = "Timothy Stephenson", email = "38039215+tim-stephenson@users.noreply.github.com" }
 ]
+license = "MIT"
+# The two vendor/*/LICENSE globs cover the third-party code THIRD_PARTY_NOTICES
+# describes (CPython's PSF License, typeshed's Apache License) -- included
+# here (not just in the sdist) so the actual shipped wheel, which bundles
+# compiled/copied code from both, carries their license text too.
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES", "vendor/cpython/*/LICENSE", "vendor/typeshed/LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "pyarrow",

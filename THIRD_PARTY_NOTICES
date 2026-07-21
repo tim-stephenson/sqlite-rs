@@ -1,0 +1,39 @@
+sqlite-rs vendors source from three upstream projects (see vendor/ and
+scripts/vendor_*.py). This file records their licensing; sqlite-rs's own
+code is licensed separately, under LICENSE.
+
+SQLite (vendor/sqlite/)
+------------------------
+Public domain. SQLite's own source carries this statement directly
+(vendor/sqlite/sqlite3.h, vendor/sqlite/sqlite3.c):
+
+    The author disclaims copyright to this source code. In place of a
+    legal notice, here is a blessing: [...] May you share freely, never
+    taking more than you give.
+
+No separate license file exists upstream, so none is vendored here either.
+
+CPython's sqlite3 module (vendor/cpython/<version>/)
+-----------------------------------------------------
+Most of the vendored C and Python sources (Modules/_sqlite/{connection,
+cursor,module,row,statement,util,prepare_protocol,microprotocols}.{c,h},
+Lib/sqlite3/{__init__,dbapi2}.py) are the original pysqlite project's
+files, and each one carries its own complete, self-contained zlib-style
+license header (Copyright (C) Gerhard Häring and, for microprotocols.*,
+Federico Di Gregorio) -- see the top of each file.
+
+A few files were added directly to CPython rather than inherited from
+pysqlite, and carry no license header of their own: Lib/sqlite3/dump.py,
+Modules/_sqlite/blob.{c,h}, and the argument-clinic-generated
+Modules/_sqlite/clinic/*.c.h. These fall under CPython's overall PSF
+License Agreement, the full text of which is vendored at
+vendor/cpython/<version>/LICENSE (downloaded from the exact upstream
+commit each version is pinned to -- see scripts/vendor_cpython.py).
+
+typeshed's sqlite3/_sqlite3 stubs (vendor/typeshed/)
+-----------------------------------------------------
+Vendored from basedpyright's bundled typeshed-fallback (see
+scripts/vendor_typeshed_sqlite3.py). These .pyi files carry no per-file
+header; typeshed's repository is licensed under the Apache License,
+Version 2.0 (with some individual files under the MIT License), the full
+text of which is vendored at vendor/typeshed/LICENSE.

@@ -32,7 +32,13 @@ pinned tag -- nothing here is patched or regenerated:
   scripts/vendor_typeshed_sqlite3.py applies to the corresponding stubs.
 
 A MANIFEST recording the resolved commit SHA is written alongside each
-vendored minor version, for provenance.
+vendored minor version, for provenance. CPython's own top-level LICENSE
+(the PSF License Agreement) is downloaded from that same commit into each
+version's directory too: most of the vendored sqlite3 module carries its
+own embedded pysqlite license per-file (see each file's header comment),
+but a few files (Lib/sqlite3/dump.py, Modules/_sqlite/blob.{c,h}, and the
+argument-clinic-generated Modules/_sqlite/clinic/*.c.h) carry no license
+header of their own and fall back to this one.
 """
 
 from __future__ import annotations
@@ -134,6 +140,16 @@ def download_tree(ref: str, subpath: str, dest: Path, keep: set[str] | None) -> 
             raise SystemExit(msg)
 
 
+def download_file(ref: str, path: str, dest: Path) -> None:
+    """Download a single file at `path` at `ref` into `dest`."""
+    entry = cast(
+        "dict[str, str]",
+        api_get(f"https://api.github.com/repos/{REPO}/contents/{path}?ref={ref}"),
+    )
+    with urllib.request.urlopen(entry["download_url"]) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+        _ = dest.write_bytes(resp.read())  # pyright: ignore[reportAny]
+
+
 def vendor_one(minor: str, version: str) -> None:
     dest_root = VENDOR_DIR / minor
     tag = f"v{version}"
@@ -146,6 +162,10 @@ def vendor_one(minor: str, version: str) -> None:
         clear_dir(dest)
         download_tree(commit, source_subpath, dest, keep)
         print(f"wrote {dest}")
+
+    license_dest = dest_root / "LICENSE"
+    print(f"downloading LICENSE from {REPO}@{commit} into {license_dest}")
+    download_file(commit, "LICENSE", license_dest)
 
     _ = (dest_root / "VERSION").write_text(version + "\n")
     manifest_file = dest_root / "MANIFEST"

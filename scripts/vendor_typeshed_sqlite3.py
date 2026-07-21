@@ -18,7 +18,9 @@ these stubs carry when it copies them into python/sqlite_rs/sqlite3/, the
 same as it already does for the vendored runtime .py files (see
 `LIB_SQLITE3_IMPORT_REWRITES` in build.rs). A MANIFEST recording the
 basedpyright version and upstream typeshed commit is written alongside for
-provenance.
+provenance, and typeshed's own top-level LICENSE (Apache License 2.0, with
+some MIT-licensed portions) is copied alongside it too -- these stub files
+carry no per-file header of their own.
 """  # noqa: E501
 
 from __future__ import annotations
@@ -54,6 +56,10 @@ def main() -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         _ = shutil.copyfile(TYPESHED_STDLIB / relative_path, dest)
         print(f"wrote {dest}")
+
+    license_dest = VENDOR_DIR / "LICENSE"
+    _ = shutil.copyfile(TYPESHED_STDLIB.parent / "LICENSE", license_dest)
+    print(f"wrote {license_dest}")
 
     _ = MANIFEST_FILE.write_text(
         f"""source: basedpyright=={version("basedpyright")}
