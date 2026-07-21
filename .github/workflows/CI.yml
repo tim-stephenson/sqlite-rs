@@ -160,26 +160,18 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
           container: ${{ matrix.platform.container }}
-      # Only x86_64 actually gets tested: s390x/ppc64le/armv7/riscv64 are
-      # built via cross-gcc for a CPU this runner can't execute at all
-      # (testing them would need QEMU, the slowness this whole matrix was
-      # reworked to avoid), and x86 (i686), despite running fine on this
-      # same x86_64 CPU, has no interpreter to install/run it against at all
-      # -- unlike windows's actions/setup-python (which supports
+      # No test steps here: s390x/ppc64le/armv7/riscv64 are built via
+      # cross-gcc for a CPU this runner can't execute at all (testing them
+      # would need QEMU, the slowness this whole matrix was reworked to
+      # avoid), x86 (i686) has no interpreter to install/run it against at
+      # all -- unlike windows's actions/setup-python (which supports
       # architecture: x86), Linux runners have no 32-bit Python available
       # (confirmed in CI: "sqlite-rs (v0.1.0) has no wheels with a matching
       # platform tag" against the 64-bit interpreter actions/setup-python
-      # actually provisions here). aarch64 moved to its own job
-      # (linux-aarch64) below, where it's tested natively.
-      - name: Install built wheel
-        if: matrix.platform.target == 'x86_64'
-        run: uv pip install --system --find-links dist sqlite-rs
-      - name: Install test dependencies
-        if: matrix.platform.target == 'x86_64'
-        run: uv pip install --system --group test
-      - name: Run tests
-        if: matrix.platform.target == 'x86_64'
-        run: pytest tests/
+      # actually provisions here) -- and x86_64 is tested in its own
+      # dedicated test-linux-x86_64 job below (one job per Python version
+      # actually built here, rather than the single "3.x" this job's own
+      # setup-python happens to resolve).
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -212,12 +204,8 @@ jobs:
           args: --release --out dist --find-interpreter --auditwheel=warn
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: "2_28"
-      - name: Install built wheel
-        run: uv pip install --system --find-links dist sqlite-rs
-      - name: Install test dependencies
-        run: uv pip install --system --group test
-      - name: Run tests
-        run: pytest tests/
+      # Tested in its own dedicated test-linux-aarch64 job below (one job per
+      # Python version actually built here), not inline in this job.
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -314,6 +302,31 @@ jobs:
         with:
           python-version: "3.x"
           architecture: ${{ matrix.platform.python_arch }}
+      # --find-interpreter only discovers interpreters actually present on
+      # this runner -- unlike the Linux manylinux/musllinux images, which
+      # bundle a whole /opt/python tree, this runner image only preinstalls
+      # standard CPython up to whatever "3.x" resolves to. These extra
+      # setup-python calls register 3.15 (still pre-release upstream, hence
+      # allow-prereleases) and the free-threaded builds (matching the linux
+      # job's 3.14t/3.15t -- no 3.13t, since upstream doesn't publish one
+      # either) so --find-interpreter actually finds them by name below;
+      # they don't need to stay the "active" python afterward, maturin looks
+      # each one up by its own pythonX.Y[t] name regardless of which is
+      # first on PATH.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+          architecture: ${{ matrix.platform.python_arch }}
+          allow-prereleases: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14t"
+          architecture: ${{ matrix.platform.python_arch }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15t"
+          architecture: ${{ matrix.platform.python_arch }}
+          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -323,19 +336,11 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # All three targets run natively here (windows-11-arm is a genuine
       # ARM64 runner, not emulated, and x86 runs at native speed under
-      # WOW64), but only x64 actually installs: pyarrow (a sqlite-rs runtime
-      # dependency) publishes no wheels for win32 or win_arm64 at all, and
-      # falls back to a from-source scikit-build-core/CMake build that fails
-      # outright without the full Arrow C++ toolchain (confirmed in CI).
-      - name: Install built wheel
-        if: matrix.platform.target == 'x64'
-        run: uv pip install --system --find-links dist sqlite-rs
-      - name: Install test dependencies
-        if: matrix.platform.target == 'x64'
-        run: uv pip install --system --group test
-      - name: Run tests
-        if: matrix.platform.target == 'x64'
-        run: pytest tests/
+      # WOW64), but only x64 is tested (in its own dedicated
+      # test-windows-x64 job below): pyarrow (a sqlite-rs runtime dependency)
+      # publishes no wheels for win32 or win_arm64 at all, and falls back to
+      # a from-source scikit-build-core/CMake build that fails outright
+      # without the full Arrow C++ toolchain (confirmed in CI).
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -356,6 +361,22 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
+      # See the matching comment in the windows job: this runner image only
+      # preinstalls standard CPython up to whatever "3.x" resolves to, so
+      # these extra setup-python calls register 3.15 and the free-threaded
+      # builds (matching linux's 3.15/3.14t/3.15t) for --find-interpreter to
+      # discover by name below.
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
+          allow-prereleases: true
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14t"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.15t"
+          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Build wheels
         uses: PyO3/maturin-action@v1
@@ -364,18 +385,169 @@ jobs:
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # Both targets run natively here (macos-15-intel is genuinely x86_64,
-      # macos-latest is genuinely Apple Silicon), no QEMU concern.
+      # macos-latest is genuinely Apple Silicon), no QEMU concern. Tested in
+      # their own dedicated test-macos-x86_64/test-macos-aarch64 jobs below
+      # (one job per Python version actually built here), not inline here.
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-macos-${{ matrix.platform.target }}
+          path: dist
+
+  # One test job per native platform, each with its own Python-version
+  # matrix instead of a single "3.x" -- installing/testing every wheel each
+  # build job actually produced (confirmed per-platform from build logs, not
+  # assumed), rather than only whichever interpreter that job's own
+  # setup-python happened to resolve. Separate jobs (not extra steps in the
+  # build jobs above) so a version's setup-python/install/test doesn't force
+  # a matrix dimension onto the build step itself, which already builds
+  # every version in one maturin invocation via --find-interpreter.
+  #
+  # allow-prereleases: true everywhere here: 3.15/3.15t are still pre-release
+  # upstream (this project already vendors 3.15.0b4), so actions/setup-python
+  # needs it to resolve them to a real installable build rather than
+  # erroring outright with none found.
+  test-linux-x86_64:
+    needs: linux
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t", "pypy3.11"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-linux-x86_64
+          path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
       - name: Install test dependencies
         run: uv pip install --system --group test
       - name: Run tests
         run: pytest tests/
-      - name: Upload wheels
-        uses: actions/upload-artifact@v6
+
+  # manylinux_2_28_aarch64's /opt/python has the same interpreter set as the
+  # manylinux-cross images the linux job's other targets use (confirmed from
+  # this job's own build log), so the same full Python-version list applies.
+  test-linux-aarch64:
+    needs: linux-aarch64
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t", "pypy3.11"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
         with:
-          name: wheels-macos-${{ matrix.platform.target }}
+          name: wheels-linux-aarch64
           path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
+      - name: Install built wheel
+        run: uv pip install --system --find-links dist sqlite-rs
+      - name: Install test dependencies
+        run: uv pip install --system --group test
+      - name: Run tests
+        run: pytest tests/
+
+  # macOS's build job relies on --find-interpreter finding whatever's already
+  # on the runner image instead of a manylinux-style /opt/python tree, which
+  # in practice (confirmed from its own build log) is only 3.11-3.14 -- no
+  # 3.10, no PyPy -- plus 3.15 and the two free-threaded builds (3.14t/3.15t)
+  # that job's own extra setup-python steps now provision. Narrower list
+  # than Linux's on purpose (no 3.10/PyPy), matching what's actually built,
+  # not aspirational.
+  test-macos-x86_64:
+    needs: macos
+    runs-on: macos-15-intel
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-macos-x86_64
+          path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
+      - name: Install built wheel
+        run: uv pip install --system --find-links dist sqlite-rs
+      - name: Install test dependencies
+        run: uv pip install --system --group test
+      - name: Run tests
+        run: pytest tests/
+
+  test-macos-aarch64:
+    needs: macos
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-macos-aarch64
+          path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
+      - name: Install built wheel
+        run: uv pip install --system --find-links dist sqlite-rs
+      - name: Install test dependencies
+        run: uv pip install --system --group test
+      - name: Run tests
+        run: pytest tests/
+
+  # Same story as macOS: windows's build job's --find-interpreter only found
+  # 3.10-3.14 on this runner image (confirmed from its own build log) -- no
+  # PyPy -- plus 3.15 and the two free-threaded builds (3.14t/3.15t) that
+  # job's own extra setup-python steps now provision.
+  test-windows-x64:
+    needs: windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15", "3.14t", "3.15t"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-windows-x64
+          path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
+      - name: Install built wheel
+        run: uv pip install --system --find-links dist sqlite-rs
+      - name: Install test dependencies
+        run: uv pip install --system --group test
+      - name: Run tests
+        run: pytest tests/
 
   sdist:
     runs-on: ubuntu-latest
