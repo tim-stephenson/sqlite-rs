@@ -80,10 +80,11 @@ module-name = "sqlite_rs._core"
 # libsqlite3 shared library at build time, and both are gitignored (they're
 # generated, not source). Without forcing them back in, wheels silently ship
 # without sqlite_rs.sqlite3 at all. shared_lib_name() in build.rs names the
-# library sqlite_rs_libsqlite3.dll on Windows (project-prefixed, to avoid
-# colliding with CPython's own bundled sqlite3.dll -- see that function's
-# doc comment) but libsqlite3.{so,dylib} elsewhere, so list all three rather
-# than one glob that would miss the Windows case.
+# library sqlite_rs_libsqlite3.dll on Windows and libsqlite_rs_sqlite3.{so,
+# dylib} elsewhere -- project-prefixed on every platform so it cannot collide
+# with CPython's own bundled SQLite under a loader that matches by bare
+# filename (Windows, musl; see that function's doc comment) -- so list all
+# three rather than one glob that would miss a platform.
 #
 # format = "wheel" on every entry: without it, maturin applies this same
 # force-include to the sdist too, which has no build step to freshly
@@ -96,8 +97,8 @@ module-name = "sqlite_rs._core"
 # vendor/ at build time, not shipped as source.
 include = [
     { path = "python/sqlite_rs/sqlite3/**/*", format = "wheel" },
-    { path = "python/sqlite_rs/libsqlite3.so", format = "wheel" },
-    { path = "python/sqlite_rs/libsqlite3.dylib", format = "wheel" },
+    { path = "python/sqlite_rs/libsqlite_rs_sqlite3.so", format = "wheel" },
+    { path = "python/sqlite_rs/libsqlite_rs_sqlite3.dylib", format = "wheel" },
     { path = "python/sqlite_rs/sqlite_rs_libsqlite3.dll", format = "wheel" },
 ]
 

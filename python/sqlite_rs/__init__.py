@@ -40,7 +40,10 @@ from sqlite_rs._core import (
     query_via_rust,  # pyright: ignore[reportUnknownVariableType]
 )
 
-_LIBSQLITE3_NAMES = {"darwin": "libsqlite3.dylib", "win32": "sqlite_rs_libsqlite3.dll"}
+_LIBSQLITE3_NAMES = {
+    "darwin": "libsqlite_rs_sqlite3.dylib",
+    "win32": "sqlite_rs_libsqlite3.dll",
+}
 
 #: Path to the libsqlite3 dylib/so bundled alongside this package's native
 #: modules -- the one library ``sqlite3.connect``, :func:`query_via_rust`,
@@ -48,7 +51,7 @@ _LIBSQLITE3_NAMES = {"darwin": "libsqlite3.dylib", "win32": "sqlite_rs_libsqlite
 #: platform naming build.rs's shared_lib_name() uses to build it. Meant for
 #: handing to an unrelated FFI caller, e.g.
 #: ``ctypes.CDLL(sqlite_rs.LIBSQLITE3_PATH)``.
-_LIBSQLITE3_NAME = _LIBSQLITE3_NAMES.get(sys.platform, "libsqlite3.so")
+_LIBSQLITE3_NAME = _LIBSQLITE3_NAMES.get(sys.platform, "libsqlite_rs_sqlite3.so")
 LIBSQLITE3_PATH = Path(__file__).parent / _LIBSQLITE3_NAME
 
 __all__ = [

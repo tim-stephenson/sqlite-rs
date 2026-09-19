@@ -32,18 +32,42 @@ fn target_os() -> String {
 /// dependency on "sqlite3.dll" would silently resolve to CPython's *own*
 /// (differently-versioned) copy instead of ours, observed in practice as
 /// sqlite_rs.sqlite3.sqlite_version reporting a different SQLite version than
-/// the actually-bundled one. macOS/Linux don't have this problem: Mach-O
-/// dependency resolution is keyed by the library's install name
-/// (`@rpath/libsqlite3.dylib` for ours vs. the system's absolute
-/// `/usr/lib/libsqlite3.dylib`, never confused despite the same basename),
-/// and ELF's is keyed by SONAME (our unversioned `libsqlite3.so` vs. the
-/// system's versioned `libsqlite3.so.0`) -- neither collides with an
-/// already-loaded module purely by filename the way Windows does.
+/// the actually-bundled one.
+///
+/// musl has the same hazard, which is why every platform is prefixed and not
+/// just Windows. musl's `load_library` resolves a DT_NEEDED name containing
+/// no `/` by scanning already-loaded objects for a matching *bare filename*
+/// and returning the first hit, before it ever looks at DT_RPATH/DT_RUNPATH
+/// (see its ldso/dynlink.c). The PyPA musllinux images ship CPython's own
+/// `/opt/_internal/sqlite3/lib/libsqlite3.so`, so an unprefixed bundled
+/// library collides with it exactly as on Windows -- reproduced as
+/// `sqlite_rs.sqlite3.sqlite_version` reporting 3.53.4 (CPython's) while the
+/// bundled file ctypes opens by absolute path reports 3.53.3, and then a
+/// segfault the moment a `sqlite3*` crosses between the two.
+///
+/// glibc genuinely doesn't have the problem -- its resolution is keyed by
+/// SONAME, so our unversioned `libsqlite3.so` and a system `libsqlite3.so.0`
+/// stay distinct -- and Mach-O keys off the install name
+/// (`@rpath/...` vs an absolute `/usr/lib/...`). Prefixing everywhere costs
+/// nothing on those two and removes the failure mode by construction rather
+/// than relying on each loader's matching rules.
 fn shared_lib_name(name: &str) -> String {
     match target_os().as_str() {
-        "macos" => format!("lib{name}.dylib"),
+        "macos" => format!("libsqlite_rs_{name}.dylib"),
         "windows" => format!("sqlite_rs_lib{name}.dll"),
-        _ => format!("lib{name}.so"),
+        _ => format!("libsqlite_rs_{name}.so"),
+    }
+}
+
+/// The `-l` stem matching [`shared_lib_name`]: `libsqlite_rs_sqlite3.{so,dylib}`
+/// is linked as `-lsqlite_rs_sqlite3`. Windows is unchanged -- it links through
+/// the `sqlite3.lib` import library `build_libsqlite3` emits, whose name is
+/// independent of the DLL's.
+fn link_lib_name() -> &'static str {
+    if target_os() == "windows" {
+        "sqlite3"
+    } else {
+        "sqlite_rs_sqlite3"
     }
 }
 
@@ -427,7 +451,7 @@ fn build_sqlite_clone_module(
     match target_os().as_str() {
         "macos" => {
             cmd.arg(format!("-L{}", libsqlite3_dir.display()));
-            cmd.arg("-lsqlite3");
+            cmd.arg(format!("-l{}", link_lib_name()));
             cmd.arg("-dynamiclib");
             cmd.arg("-undefined").arg("dynamic_lookup");
             // One level up: python/sqlite_rs/sqlite3/_sqlite3.so -> ../libsqlite3.dylib
@@ -462,7 +486,7 @@ fn build_sqlite_clone_module(
         }
         _ => {
             cmd.arg(format!("-L{}", libsqlite3_dir.display()));
-            cmd.arg("-lsqlite3");
+            cmd.arg(format!("-l{}", link_lib_name()));
             cmd.arg("-shared");
             cmd.arg("-Wl,-rpath,$ORIGIN/..");
             cmd.arg("-o").arg(&out_path);
@@ -575,7 +599,7 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
             println!("cargo:rustc-link-search=native={python_lib_dir}");
         }
     }
-    println!("cargo:rustc-link-lib=dylib=sqlite3");
+    println!("cargo:rustc-link-lib=dylib={}", link_lib_name());
     match target_os().as_str() {
         "macos" => println!("cargo:rustc-cdylib-link-arg=-Wl,-rpath,@loader_path"),
         // Windows' default DLL search order already checks the directory of
