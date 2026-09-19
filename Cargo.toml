@@ -8,7 +8,7 @@ license = "MIT"
 # because maturin builds the sdist by shelling out to `cargo package --list`,
 # and Cargo warns on every such run when a manifest carries none of
 # description/documentation/homepage/repository.
-description = "A Rust reimplementation of SQLite, validated in-process against the real thing."
+description = "A drop-in superset of Python's sqlite3 bindings, extended with Rust."
 repository = "https://github.com/tim-stephenson/sqlite-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

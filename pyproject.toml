@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sqlite-rs"
-description = "A Rust reimplementation of SQLite, validated in-process against the real thing."
+description = "A drop-in superset of Python's sqlite3 bindings, extended with Rust."
 authors = [
     { name = "Timothy Stephenson", email = "38039215+tim-stephenson@users.noreply.github.com" }
 ]
