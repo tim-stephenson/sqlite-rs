@@ -204,11 +204,11 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             manylinux: "2_28"
-            interpreter: ${{ needs.config.outputs.all_i_args }}
+            pyset: all
           - runner: ubuntu-22.04
             target: x86
             manylinux: "2_28"
-            interpreter: ${{ needs.config.outputs.all_i_args }}
+            pyset: all
           # armv7: manylinux2014-cross's bundled cross-gcc is too old to ship
           # stdatomic.h, which CPython 3.13+'s mimalloc allocator requires --
           # manylinux_2_28-cross bundles a newer one that has it (verified
@@ -233,7 +233,7 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
             manylinux: "2_28"
-            interpreter: ${{ needs.config.outputs.cpython_source_built_i_args }}
+            pyset: source_built
           # riscv64 needs glibc new enough to have riscv64 support at all -- PyPA's
           # oldest riscv64 baseline is manylinux_2_39 (verified: no PyPA image
           # exists for any older manylinux_2_* tag).
@@ -251,7 +251,7 @@ jobs:
             target: riscv64
             manylinux: "2_39"
             container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
-            interpreter: ${{ needs.config.outputs.all_i_args }}
+            pyset: all
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -291,7 +291,11 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --auditwheel=warn ${{ matrix.platform.interpreter }}
+          args: >-
+            --release --out dist --auditwheel=warn
+            ${{ matrix.platform.pyset == 'source_built'
+            && needs.config.outputs.cpython_source_built_i_args
+            || needs.config.outputs.all_i_args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
           container: ${{ matrix.platform.container }}
@@ -378,12 +382,14 @@ jobs:
       matrix:
         platform:
           - target: x86_64
-            interpreter: ${{ needs.config.outputs.all_i_args }}
+            pyset: all
+            container: quay.io/pypa/musllinux_1_2_x86_64
           - target: x86
-            interpreter: ${{ needs.config.outputs.all_i_args }}
+            pyset: all
+            container: quay.io/pypa/musllinux_1_2_i686
           - target: armv7
             container: ghcr.io/rust-cross/musllinux_1_2-cross:armv7
-            interpreter: ${{ needs.config.outputs.cpython_source_built_i_args }}
+            pyset: source_built
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -406,7 +412,9 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: >-
             --release --out dist --auditwheel=warn
-            ${{ matrix.platform.interpreter }}
+            ${{ matrix.platform.pyset == 'source_built'
+            && needs.config.outputs.cpython_source_built_i_args
+            || needs.config.outputs.all_i_args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
           container: ${{ matrix.platform.container }}
@@ -443,6 +451,7 @@ jobs:
             ${{ needs.config.outputs.all_i_args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
+          container: quay.io/pypa/musllinux_1_2_aarch64
       # Tested in test-musllinux-aarch64 below, not inline: this runner is a
       # glibc host, so pip would reject the musllinux platform tag here.
       - name: Upload wheels
