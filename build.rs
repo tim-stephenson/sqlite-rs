@@ -387,6 +387,34 @@ fn clone_module_sources(cpython_sqlite_dir: &Path) -> Vec<PathBuf> {
     sources
 }
 
+/// Whether the interpreter being built for is a free-threaded (no-GIL) CPython.
+fn target_is_free_threaded() -> bool {
+    pyo3_build_config::get().target_abi().kind().is_free_threaded()
+}
+
+/// Define `Py_GIL_DISABLED` for a C compilation that includes `Python.h`, when
+/// building for a free-threaded interpreter on Windows.
+///
+/// On Unix, `configure` bakes `#define Py_GIL_DISABLED 1` into the
+/// free-threaded build's own `pyconfig.h`, so including `Python.h` is enough.
+/// Windows has no configure step: `PC/pyconfig.h` never defines it, and
+/// CPython's own MSBuild passes it on the command line instead. Every
+/// extension builder has to do the same -- setuptools reads it back out of
+/// `sysconfig.get_config_var("Py_GIL_DISABLED")` -- and `cc` does not.
+///
+/// It is not a cosmetic flag: `PyModuleDef_Base` embeds a `PyObject`, whose
+/// layout differs between the two builds, so compiling without it against
+/// free-threaded headers produces a struct the interpreter reads as garbage.
+/// CI caught it as `SystemError: invalid PyModuleDef, extension possibly
+/// compiled for non-free-threaded Python` on Windows 3.15t only -- 3.15t
+/// passed on linux x86_64/aarch64 and macOS x86_64/aarch64, exactly as the
+/// Unix/Windows asymmetry predicts.
+fn define_gil_disabled_if_needed(build: &mut cc::Build) {
+    if target_os() == "windows" && target_is_free_threaded() {
+        build.define("Py_GIL_DISABLED", "1");
+    }
+}
+
 /// Compile CPython's vendored (unmodified) `Modules/_sqlite/*.c` into a
 /// `_sqlite3<EXT_SUFFIX>` extension module in `python/sqlite_rs/sqlite3/`,
 /// dynamically linked against the `libsqlite3` built above instead of
@@ -414,7 +442,9 @@ fn build_sqlite_clone_module(
 
     let sources = clone_module_sources(cpython_sqlite_dir);
 
-    let objects = cc::Build::new()
+    let mut clone_build = cc::Build::new();
+    define_gil_disabled_if_needed(&mut clone_build);
+    let objects = clone_build
         .files(&sources)
         .include(cpython_sqlite_dir)
         .include(sqlite_dir)
@@ -566,7 +596,9 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
     let python = resolve_python();
     let include_dir = include_dir(&python);
 
-    cc::Build::new()
+    let mut shim_build = cc::Build::new();
+    define_gil_disabled_if_needed(&mut shim_build);
+    shim_build
         .file(native_dir.join("sqlite_rs_shim.c"))
         .include(native_dir)
         .include(cpython_sqlite_dir)
