@@ -37,7 +37,7 @@ PRODUCT_LINE = re.compile(
 
 def find_amalgamation(version: str) -> tuple[str, int, str]:
     """Look up (relative_url, size_bytes, sha3_256_hex) for `version`'s amalgamation zip."""  # noqa: E501
-    with urllib.request.urlopen(DOWNLOAD_PAGE) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+    with urllib.request.urlopen(DOWNLOAD_PAGE) as resp:  # pyright: ignore[reportAny]
         page: str = resp.read().decode("utf-8")  # pyright: ignore[reportAny]
 
     for match in PRODUCT_LINE.finditer(page):
@@ -53,7 +53,7 @@ def fetch_and_verify(
 ) -> bytes:
     """Download the amalgamation zip and verify its size and SHA3-256 before returning it."""  # noqa: E501
     url = f"https://www.sqlite.org/{relative_url}"
-    with urllib.request.urlopen(url) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+    with urllib.request.urlopen(url) as resp:  # pyright: ignore[reportAny]
         data: bytes = resp.read()  # pyright: ignore[reportAny]
 
     if len(data) != expected_size:

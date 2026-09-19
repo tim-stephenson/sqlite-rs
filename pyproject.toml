@@ -49,6 +49,17 @@ ignore = [
     "COM812",
     "D100",
     "EXE001",
+    # flake8-copyright: demands a copyright header at the top of every file.
+    # Enabled only because `select = ["ALL"]` picks up new rules as ruff
+    # releases them; nothing here wants per-file copyright notices.
+    "CPY001",
+    # Every urlopen() in scripts/ builds an https URL from a module constant,
+    # so the "could be file: or a custom scheme" warning is a false positive.
+    # Ignored project-wide rather than per-call: ruff 0.16 stopped flagging
+    # some of these, which turned the old `# noqa: S310` comments into RUF100
+    # "unused noqa" errors, so the suppression cannot live at the call site
+    # and work across both ruff versions.
+    "S310",
 ]
 
 [tool.ruff.lint.pydocstyle]

@@ -69,10 +69,10 @@ def api_get(url: str) -> object:
     if not url.startswith(("http:", "https:")):
         msg = "URL must start with 'http:' or 'https:'"
         raise ValueError(msg)
-    request = urllib.request.Request(  # noqa: S310
+    request = urllib.request.Request(
         url, headers={"Accept": "application/vnd.github+json"}
     )
-    with urllib.request.urlopen(request) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+    with urllib.request.urlopen(request) as resp:  # pyright: ignore[reportAny]
         return json.loads(resp.read())  # pyright: ignore[reportAny]
 
 
@@ -133,7 +133,7 @@ def download_tree(ref: str, subpath: str, dest: Path, keep: set[str] | None) -> 
         if entry["type"] == "dir":
             download_tree(ref, entry["path"], dest / entry["name"], keep=None)
         elif entry["type"] == "file":
-            with urllib.request.urlopen(entry["download_url"]) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+            with urllib.request.urlopen(entry["download_url"]) as resp:  # pyright: ignore[reportAny]
                 _ = (dest / entry["name"]).write_bytes(resp.read())  # pyright: ignore[reportAny]
         else:
             msg = f"unexpected entry type {entry['type']!r} for {entry['path']}"
@@ -146,7 +146,7 @@ def download_file(ref: str, path: str, dest: Path) -> None:
         "dict[str, str]",
         api_get(f"https://api.github.com/repos/{REPO}/contents/{path}?ref={ref}"),
     )
-    with urllib.request.urlopen(entry["download_url"]) as resp:  # noqa: S310  # pyright: ignore[reportAny]
+    with urllib.request.urlopen(entry["download_url"]) as resp:  # pyright: ignore[reportAny]
         _ = dest.write_bytes(resp.read())  # pyright: ignore[reportAny]
 
 
