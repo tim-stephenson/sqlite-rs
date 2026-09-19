@@ -39,11 +39,10 @@ jobs:
       tested: ${{ steps.versions.outputs.tested }}
       tested_spaced: ${{ steps.versions.outputs.tested_spaced }}
       tested_windows: ${{ steps.versions.outputs.tested_windows }}
-      # Newline-separated, for actions/setup-python's multi-version input.
-      all_lines: ${{ steps.versions.outputs.all_lines }}
       # Space-separated, for maturin's `--interpreter`.
       all_spaced: ${{ steps.versions.outputs.all_spaced }}
-      cpython_source_built_spaced: ${{ steps.versions.outputs.cpython_source_built_spaced }}
+      all_i_args: ${{ steps.versions.outputs.all_i_args }}
+      cpython_source_built_i_args: ${{ steps.versions.outputs.cpython_source_built_i_args }}
     steps:
       - id: versions
         shell: bash
@@ -81,6 +80,7 @@ jobs:
               printf '%s=%s\n' "$name" \
                 "$(printf '%s\n' $keep | jq -Rsc 'split("\n") | map(select(length > 0))')"
               printf '%s_spaced=%s\n' "$name" "$keep"
+              printf '%s_i_args=%s\n' "$name" "$(for x in $keep; do printf -- '-i python%s ' "$x"; done)"
               printf '%s_lines<<__EOF__\n' "$name"
               printf '%s\n' $keep
               printf '__EOF__\n'
@@ -204,11 +204,11 @@ jobs:
           - runner: ubuntu-22.04
             target: x86_64
             manylinux: "2_28"
-            interpreter: ${{ needs.config.outputs.all_spaced }}
+            interpreter: ${{ needs.config.outputs.all_i_args }}
           - runner: ubuntu-22.04
             target: x86
             manylinux: "2_28"
-            interpreter: ${{ needs.config.outputs.all_spaced }}
+            interpreter: ${{ needs.config.outputs.all_i_args }}
           # armv7: manylinux2014-cross's bundled cross-gcc is too old to ship
           # stdatomic.h, which CPython 3.13+'s mimalloc allocator requires --
           # manylinux_2_28-cross bundles a newer one that has it (verified
@@ -233,7 +233,7 @@ jobs:
           - runner: ubuntu-22.04
             target: armv7
             manylinux: "2_28"
-            interpreter: ${{ needs.config.outputs.cpython_source_built_spaced }}
+            interpreter: ${{ needs.config.outputs.cpython_source_built_i_args }}
           # riscv64 needs glibc new enough to have riscv64 support at all -- PyPA's
           # oldest riscv64 baseline is manylinux_2_39 (verified: no PyPA image
           # exists for any older manylinux_2_* tag).
@@ -251,7 +251,7 @@ jobs:
             target: riscv64
             manylinux: "2_39"
             container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
-            interpreter: ${{ needs.config.outputs.all_spaced }}
+            interpreter: ${{ needs.config.outputs.all_i_args }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -291,7 +291,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --auditwheel=warn --interpreter ${{ matrix.platform.interpreter }}
+          args: --release --out dist --auditwheel=warn ${{ matrix.platform.interpreter }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
           container: ${{ matrix.platform.container }}
@@ -344,7 +344,7 @@ jobs:
           target: aarch64
           args: >-
             --release --out dist --auditwheel=warn
-            --interpreter ${{ needs.config.outputs.all_spaced }}
+            ${{ needs.config.outputs.all_i_args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: "2_28"
       # Tested in its own dedicated test-linux-aarch64 job below (one job per
@@ -378,12 +378,12 @@ jobs:
       matrix:
         platform:
           - target: x86_64
-            interpreter: ${{ needs.config.outputs.all_spaced }}
+            interpreter: ${{ needs.config.outputs.all_i_args }}
           - target: x86
-            interpreter: ${{ needs.config.outputs.all_spaced }}
+            interpreter: ${{ needs.config.outputs.all_i_args }}
           - target: armv7
             container: ghcr.io/rust-cross/musllinux_1_2-cross:armv7
-            interpreter: ${{ needs.config.outputs.cpython_source_built_spaced }}
+            interpreter: ${{ needs.config.outputs.cpython_source_built_i_args }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -406,7 +406,7 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: >-
             --release --out dist --auditwheel=warn
-            --interpreter ${{ matrix.platform.interpreter }}
+            ${{ matrix.platform.interpreter }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
           container: ${{ matrix.platform.container }}
@@ -440,7 +440,7 @@ jobs:
           target: aarch64
           args: >-
             --release --out dist --auditwheel=warn
-            --interpreter ${{ needs.config.outputs.all_spaced }}
+            ${{ needs.config.outputs.all_i_args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
       # Tested in test-musllinux-aarch64 below, not inline: this runner is a
@@ -592,6 +592,7 @@ jobs:
     runs-on: ${{ matrix.platform.runner }}
     needs: config
     strategy:
+      fail-fast: false
       matrix:
         platform:
           - runner: macos-15-intel
@@ -600,31 +601,97 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v6
-      # One multi-version setup-python step fed straight from the config job,
-      # rather than the windows job's one-step-per-version block. macOS can
-      # do this because every install puts a distinctly-named binary on PATH
-      # (python3.15 and python3.15t are separate names), so maturin's
-      # `--interpreter 3.15 3.15t` below resolves each unambiguously -- the
-      # registry-shadowing problem documented in the windows job is specific
-      # to how Windows installs register themselves, not to maturin.
+      # Exact interpreter paths, one setup-python step per version, exactly as
+      # the windows job does -- and for a reason specific to this project
+      # rather than to maturin.
       #
-      # allow-prereleases only affects versions with no GA release yet (3.15/
-      # 3.15t), so it's harmless to apply to the whole list at once.
-      - uses: actions/setup-python@v6
+      # build.rs has to compile CPython's own _sqlite3 sources against the
+      # headers of the interpreter being built for. resolve_python() gets that
+      # interpreter from pyo3_build_config, and when that yields nothing it
+      # falls back to whatever `python3` is first on PATH. Passing maturin a
+      # bare version (`--interpreter 3.11`) leaves pyo3's config without an
+      # executable on macOS, so the fallback won -- CI built 3.11 against
+      # 3.15t's headers, and the `_sqlite3.so` in the resulting wheel
+      # referenced symbols its own interpreter does not export. Passing an
+      # absolute path puts that path in pyo3's config, so build.rs resolves
+      # the right headers.
+      #
+      # update-environment: false on every step keeps each install off PATH,
+      # so the fallback can never silently pick a different interpreter again.
+      # The guard step below keeps these hardcoded versions in sync with the
+      # config job, since Actions cannot loop over a `uses:` step.
+      - id: py311
+        uses: actions/setup-python@v6
         with:
-          python-version: ${{ needs.config.outputs.all_lines }}
+          python-version: "3.11"
+          update-environment: false
+      - id: py312
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          update-environment: false
+      - id: py313
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          update-environment: false
+      - id: py314
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          update-environment: false
+      - id: py315
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.15"
           allow-prereleases: true
+          update-environment: false
+      - id: py315t
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.15t"
+          allow-prereleases: true
+          update-environment: false
       - uses: astral-sh/setup-uv@v7
+      - name: Check interpreter steps match the canonical list
+        shell: bash
+        run: |
+          set -euo pipefail
+          declared="3.11 3.12 3.13 3.14 3.15 3.15t"
+          canonical="${{ needs.config.outputs.all_spaced }}"
+          if [ "$declared" != "$canonical" ]; then
+            echo "::error::The setup-python steps in this job are out of sync with the config job."
+            echo "  steps declare: $declared"
+            echo "  config job:    $canonical"
+            exit 1
+          fi
+      - name: Compute interpreter list
+        id: interpreters
+        shell: bash
+        run: |
+          set -euo pipefail
+          args="--release --out dist"
+          for p in \
+            "${{ steps.py311.outputs.python-path }}" \
+            "${{ steps.py312.outputs.python-path }}" \
+            "${{ steps.py313.outputs.python-path }}" \
+            "${{ steps.py314.outputs.python-path }}" \
+            "${{ steps.py315.outputs.python-path }}" \
+            "${{ steps.py315t.outputs.python-path }}"; do
+            if [ -n "$p" ]; then
+              args="$args -i $p"
+            fi
+          done
+          echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist --interpreter ${{ needs.config.outputs.all_spaced }}
+          args: ${{ steps.interpreters.outputs.args }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # Both targets run natively here (macos-15-intel is genuinely x86_64,
       # macos-latest is genuinely Apple Silicon), no QEMU concern. Tested in
-      # their own dedicated test-macos-x86_64/test-macos-aarch64 jobs below
-      # (one job per Python version actually built here), not inline here.
+      # their own dedicated test-macos-x86_64/test-macos-aarch64 jobs below.
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -658,6 +725,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          # 3.15/3.15t have no GA release yet; harmless for the others.
+          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -682,6 +751,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          # 3.15/3.15t have no GA release yet; harmless for the others.
+          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -706,6 +777,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          # 3.15/3.15t have no GA release yet; harmless for the others.
+          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -730,6 +803,8 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          # 3.15/3.15t have no GA release yet; harmless for the others.
+          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
@@ -755,6 +830,8 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           architecture: x64
+          # 3.15 has no GA release yet; harmless for the others.
+          allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
       - name: Install built wheel
         run: uv pip install --system --find-links dist sqlite-rs
