@@ -55,7 +55,6 @@ jobs:
       all_spaced: ${{ steps.versions.outputs.all_spaced }}
       all_i_args: ${{ steps.versions.outputs.all_i_args }}
       cpython_source_built_i_args: ${{ steps.versions.outputs.cpython_source_built_i_args }}
-      musllinux_1_1_inherited_i_args: ${{ steps.versions.outputs.musllinux_1_1_inherited_i_args }}
     steps:
       - id: versions
         shell: bash
@@ -110,62 +109,44 @@ jobs:
           emit all
 
           # Which interpreters a builder image actually carries comes down to
-          # how that image got its /opt/python, and there are exactly two
-          # deficient cases (see rust-cross/manylinux-cross's render.py, which
-          # decides this per target):
+          # how that image got its /opt/python (see rust-cross/manylinux-cross's
+          # render.py, which decides this per target). Every target here copies
+          # /opt/python from a supported PyPA image and gets the full set --
+          # except armv7, glibc and musl alike, which has no upstream PyPA image
+          # in rust-cross's 2_28 group and so has its CPythons compiled from
+          # source in the Dockerfile. That list is pinned at
+          # 3.9.25/3.10.20/3.11.15/3.12.13/3.13.14/3.14.6, with no free-threaded
+          # build of any version. So: no 3.15, no 3.15t.
           #
-          #   1. Targets with no upstream PyPA image to copy from -- glibc
-          #      armv7 and musl armv7 -- have rust-cross compile CPython
-          #      from source in the Dockerfile. That list is pinned at
-          #      3.9.25/3.10.20/3.11.15/3.12.13/3.13.14/3.14.6, with no
-          #      free-threaded build of any version. So: no 3.15, no 3.15t.
+          # What would have to change for armv7 to get them -- none of it
+          # fixable from here, so armv7 stays capped at 3.14 until one happens:
           #
-          #      What would have to change for armv7 to get 3.15/3.15t --
-          #      we can't fix any of this from here, and armv7 stays capped
-          #      at 3.14 until one of them happens:
-          #
-          #      (a) rust-cross adds 3.15 to the source-build blocks in its
-          #          Dockerfile.j2, plus a second --disable-gil configure
-          #          pass installed as /opt/python/cp315-cp315t for 3.15t.
-          #          Today the file has one hardcoded block per version and
-          #          stops at 3.14.6.
-          #      (b) Better: rust-cross stops source-building armv7 at all
-          #          and COPYs /opt/python from PyPA instead, the way it
-          #          already does for ppc64le and riscv64. The images exist
-          #          and are actively rebuilt -- manylinux_2_31_armv7l,
-          #          manylinux_2_35_armv7l and musllinux_1_2_armv7l were all
-          #          republished 2026-09-14 and carry the full CPython set.
-          #          The gap is purely one of tags: PyPA ships armv7l only
-          #          on Debian-derivative bases (manylinux_2_31 is Ubuntu
-          #          20.04, manylinux_2_35 is Ubuntu 22.04), because the
-          #          RHEL-family bases behind manylinux2014/_2_28/_2_34/
-          #          _2_39 have no armv7 build at all. So manylinux_2_28_
-          #          armv7l does not and will not exist -- and armv7 sits in
-          #          rust-cross's 2_28 group, where there is nothing to copy
-          #          from. Moving it to their 2_31 or 2_35 group would fix
-          #          it; note those tags mean a glibc 2.31/2.35 floor for
-          #          armv7 specifically, above this project's 2.28.
-          #      (c) Failing both, this workflow could point armv7 at the
-          #          native PyPA manylinux_2_31_armv7l image and run it
-          #          under QEMU -- correct, but the emulation slowness this
-          #          matrix was built to avoid.
+          # (a) rust-cross adds 3.15 to the source-build blocks in its
+          #     Dockerfile.j2, plus a second --disable-gil configure
+          #     pass installed as /opt/python/cp315-cp315t for 3.15t.
+          #     Today the file has one hardcoded block per version and
+          #     stops at 3.14.6.
+          # (b) Better: rust-cross stops source-building armv7 at all
+          #     and COPYs /opt/python from PyPA instead, the way it
+          #     already does for ppc64le and riscv64. The images exist
+          #     and are actively rebuilt -- manylinux_2_31_armv7l,
+          #     manylinux_2_35_armv7l and musllinux_1_2_armv7l were all
+          #     republished 2026-09-14 and carry the full CPython set.
+          #     The gap is purely one of tags: PyPA ships armv7l only
+          #     on Debian-derivative bases (manylinux_2_31 is Ubuntu
+          #     20.04, manylinux_2_35 is Ubuntu 22.04), because the
+          #     RHEL-family bases behind manylinux2014/_2_28/_2_34/
+          #     _2_39 have no armv7 build at all. So manylinux_2_28_
+          #     armv7l does not and will not exist -- and armv7 sits in
+          #     rust-cross's 2_28 group, where there is nothing to copy
+          #     from. Moving it to their 2_31 or 2_35 group would fix
+          #     it; note those tags mean a glibc 2.31/2.35 floor for
+          #     armv7 specifically, above this project's 2.28.
+          # (c) Failing both, this workflow could point armv7 at the
+          #     native PyPA manylinux_2_31_armv7l image and run it
+          #     under QEMU -- correct, but the emulation slowness this
+          #     matrix was built to avoid.
           emit cpython_source_built 3.15 3.15t
-
-          #   2. musl i686 copies /opt/python straight out of
-          #      quay.io/pypa/musllinux_1_1_i686, an image PyPA retired on
-          #      2024-11-01 whose final build (2024-10-26) predates CPython
-          #      3.14, so it is frozen at 3.13 and always will be.
-          #
-          #      x86_64 and aarch64 escaped this by moving to the native PyPA
-          #      musllinux_1_2 images. i686 cannot follow them: Rust publishes
-          #      no *host* toolchain for i686-unknown-linux-musl (a
-          #      cross-compile-only target), so rustup inside a genuine i686
-          #      musl container fails with "installer for platform
-          #      'i686-unknown-linux-musl' not found". It has to be
-          #      cross-compiled from an x86_64 glibc host, which means the
-          #      rust-cross image, which means this cap. (glibc i686 is
-          #      unaffected -- i686-unknown-linux-gnu *is* a supported host.)
-          emit musllinux_1_1_inherited 3.14 3.15 3.15t
 
           emit tested
 
@@ -395,7 +376,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # sccache: false on the native-musl legs. sccache publishes no
+          # sccache: false on the native-musl leg. sccache publishes no
           # musllinux wheel for any architecture (only manylinux/macOS/
           # Windows), so maturin-action's install step fails outright inside a
           # real musl container: "Because sccache>=0.10.0 has no wheels with a
@@ -406,10 +387,6 @@ jobs:
             pyset: all
             container: quay.io/pypa/musllinux_1_2_x86_64
             sccache: false
-          - target: x86
-            pyset: musllinux_1_1
-            container: ghcr.io/rust-cross/musllinux_1_2-cross:i686
-            sccache: true
           - target: armv7
             container: ghcr.io/rust-cross/musllinux_1_2-cross:armv7
             pyset: source_built
@@ -436,10 +413,8 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: >-
             --release --out dist --auditwheel=warn
-            ${{ (matrix.platform.pyset == 'source_built'
-            && needs.config.outputs.cpython_source_built_i_args)
-            || (matrix.platform.pyset == 'musllinux_1_1'
-            && needs.config.outputs.musllinux_1_1_inherited_i_args)
+            ${{ matrix.platform.pyset == 'source_built'
+            && needs.config.outputs.cpython_source_built_i_args
             || needs.config.outputs.all_i_args }}
           sccache: ${{ matrix.platform.sccache && !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
