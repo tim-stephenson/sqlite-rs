@@ -55,6 +55,7 @@ jobs:
       all_spaced: ${{ steps.versions.outputs.all_spaced }}
       all_i_args: ${{ steps.versions.outputs.all_i_args }}
       cpython_source_built_i_args: ${{ steps.versions.outputs.cpython_source_built_i_args }}
+      musllinux_1_1_inherited_i_args: ${{ steps.versions.outputs.musllinux_1_1_inherited_i_args }}
     steps:
       - id: versions
         shell: bash
@@ -150,21 +151,22 @@ jobs:
           #          matrix was built to avoid.
           emit cpython_source_built 3.15 3.15t
 
-          #   2. (Formerly: musl x86_64/i686/aarch64 copied /opt/python out
-          #      of quay.io/pypa/musllinux_1_1_<arch>, which PyPA retired on
-          #      2024-11-01 with a final build on 2024-10-26 -- before CPython
-          #      3.14 existed -- so they were frozen at 3.13. Those targets no
-          #      longer use rust-cross at all: a musl container on a glibc
-          #      host is the same CPU, so the native, actively-maintained PyPA
-          #      musllinux_1_2 images run without emulation. Only musl armv7,
-          #      which has no native runner, still falls under case 1.)
+          #   2. musl i686 copies /opt/python straight out of
+          #      quay.io/pypa/musllinux_1_1_i686, an image PyPA retired on
+          #      2024-11-01 whose final build (2024-10-26) predates CPython
+          #      3.14, so it is frozen at 3.13 and always will be.
+          #
+          #      x86_64 and aarch64 escaped this by moving to the native PyPA
+          #      musllinux_1_2 images. i686 cannot follow them: Rust publishes
+          #      no *host* toolchain for i686-unknown-linux-musl (a
+          #      cross-compile-only target), so rustup inside a genuine i686
+          #      musl container fails with "installer for platform
+          #      'i686-unknown-linux-musl' not found". It has to be
+          #      cross-compiled from an x86_64 glibc host, which means the
+          #      rust-cross image, which means this cap. (glibc i686 is
+          #      unaffected -- i686-unknown-linux-gnu *is* a supported host.)
+          emit musllinux_1_1_inherited 3.14 3.15 3.15t
 
-          # Everything sqlite-rs builds is now also testable: the package has
-          # no runtime dependencies at all, so a wheel plus the `test` group
-          # (pytest, and pywin32 on win32) is the whole install. This used to
-          # exclude 3.15/3.15t because pyarrow had no wheel for either and
-          # could not build from source -- that dependency has since been
-          # dropped.
           emit tested
 
           # Windows is the one exception: the test group's pywin32 -- needed
@@ -393,7 +395,7 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          # sccache: false on the two native-musl legs. sccache publishes no
+          # sccache: false on the native-musl legs. sccache publishes no
           # musllinux wheel for any architecture (only manylinux/macOS/
           # Windows), so maturin-action's install step fails outright inside a
           # real musl container: "Because sccache>=0.10.0 has no wheels with a
@@ -405,9 +407,9 @@ jobs:
             container: quay.io/pypa/musllinux_1_2_x86_64
             sccache: false
           - target: x86
-            pyset: all
-            container: quay.io/pypa/musllinux_1_2_i686
-            sccache: false
+            pyset: musllinux_1_1
+            container: ghcr.io/rust-cross/musllinux_1_2-cross:i686
+            sccache: true
           - target: armv7
             container: ghcr.io/rust-cross/musllinux_1_2-cross:armv7
             pyset: source_built
@@ -434,8 +436,10 @@ jobs:
           target: ${{ matrix.platform.target }}
           args: >-
             --release --out dist --auditwheel=warn
-            ${{ matrix.platform.pyset == 'source_built'
-            && needs.config.outputs.cpython_source_built_i_args
+            ${{ (matrix.platform.pyset == 'source_built'
+            && needs.config.outputs.cpython_source_built_i_args)
+            || (matrix.platform.pyset == 'musllinux_1_1'
+            && needs.config.outputs.musllinux_1_1_inherited_i_args)
             || needs.config.outputs.all_i_args }}
           sccache: ${{ matrix.platform.sccache && !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
