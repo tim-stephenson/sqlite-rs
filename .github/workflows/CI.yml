@@ -415,12 +415,11 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
           container: ghcr.io/rust-cross/musllinux_1_2-cross:${{ matrix.platform.cross_arch }}
-      # No test step here (unlike the linux job): these wheels are tagged
-      # musllinux_1_2_* for musl libc (Alpine) systems, but this runner is a
-      # standard glibc Ubuntu host -- pip would refuse to install them at all
-      # (incompatible platform tag), regardless of matching CPU architecture.
-      # Testing these properly would need a musl/Alpine container step, which
-      # is a separate follow-up, not a "native, no extra infra" test.
+      # Not tested inline: these wheels are tagged musllinux_1_2_* for musl
+      # libc (Alpine) systems, but this runner is a standard glibc Ubuntu
+      # host -- pip would refuse to install them at all (incompatible
+      # platform tag), regardless of matching CPU architecture. x86_64 and
+      # aarch64 are tested in the dedicated musl container jobs below.
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -738,6 +737,59 @@ jobs:
         run: uv pip install --system --group test
       - name: Run tests
         run: pytest tests/
+
+  # musl wheels can't be tested the way every other platform's are: the
+  # runner is glibc, so pip rejects the musllinux_1_2_* platform tag outright.
+  # These two jobs run the tests inside the PyPA musllinux_1_2 image instead.
+  #
+  # `docker run` in a step rather than the job-level `container:` key on
+  # purpose. With `container:`, the Actions runner injects its own
+  # glibc-linked Node to execute every `uses:` step, which does not run on
+  # musl -- checkout and download-artifact would fail before any test did.
+  # Running the container from a step keeps those actions on the glibc host
+  # and puts only the tests inside musl.
+  #
+  # One job per architecture looping over versions, rather than this file's
+  # usual job-per-version matrix: the image is ~1GB and a matrix would pull
+  # it once per version. This also matches the README's note that more jobs
+  # queue rather than parallelize.
+  #
+  # Only x86_64 and aarch64 are covered -- both have a native runner. i686
+  # and armv7 would need QEMU, the same reason their glibc counterparts go
+  # untested.
+  test-musllinux-x86_64:
+    needs: [config, musllinux]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-musllinux-x86_64
+          path: dist
+      - name: Run tests in musllinux_1_2 container
+        env:
+          VERSIONS: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
+        run: |
+          set -euo pipefail
+          docker run --rm -e VERSIONS -v "$PWD:/io" -w /io \
+            quay.io/pypa/musllinux_1_2_x86_64 /io/.github/musl-test.sh
+
+  test-musllinux-aarch64:
+    needs: [config, musllinux]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-musllinux-aarch64
+          path: dist
+      - name: Run tests in musllinux_1_2 container
+        env:
+          VERSIONS: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
+        run: |
+          set -euo pipefail
+          docker run --rm -e VERSIONS -v "$PWD:/io" -w /io \
+            quay.io/pypa/musllinux_1_2_aarch64 /io/.github/musl-test.sh
 
   sdist:
     runs-on: ubuntu-latest
