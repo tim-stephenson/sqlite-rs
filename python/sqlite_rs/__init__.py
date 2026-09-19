@@ -35,7 +35,10 @@ if sys.platform == "win32":
     _ = os.add_dll_directory(str(Path(__file__).parent))
 
 from sqlite_rs._core import (
+    fetch_all,  # pyright: ignore[reportUnknownVariableType]
+    fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     get_raw_db_ptr,  # pyright: ignore[reportUnknownVariableType]
+    get_raw_stmt_ptr,  # pyright: ignore[reportUnknownVariableType]
     query_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     query_via_rust,  # pyright: ignore[reportUnknownVariableType]
 )
@@ -56,7 +59,10 @@ LIBSQLITE3_PATH = Path(__file__).parent / _LIBSQLITE3_NAME
 
 __all__ = [
     "LIBSQLITE3_PATH",
+    "fetch_all",
+    "fetch_all_via_raw_pointer",
     "get_raw_db_ptr",
+    "get_raw_stmt_ptr",
     "query_via_raw_pointer",
     "query_via_rust",
 ]

@@ -23,6 +23,14 @@ mod sqlite_ffi {
         /// created by sqlite_rs's own clone of the _sqlite module.
         pub fn sqlite_rs_get_connection_db(conn: *mut pyffi::PyObject) -> *mut sqlite3;
 
+        /// native/sqlite_rs_shim.c -- the `sqlite3_stmt*` backing a DB-API
+        /// cursor, or NULL before execute() or after close().
+        pub fn sqlite_rs_get_cursor_stmt(cursor: *mut pyffi::PyObject) -> *mut sqlite3_stmt;
+
+        /// native/sqlite_rs_shim.c -- reset and release the cursor's
+        /// statement, restoring the invariant CPython's iternext asserts.
+        pub fn sqlite_rs_cursor_release_stmt(cursor: *mut pyffi::PyObject);
+
         pub fn sqlite3_prepare_v2(
             db: *mut sqlite3,
             sql: *const c_char,
@@ -39,6 +47,8 @@ mod sqlite_ffi {
         pub fn sqlite3_column_text(stmt: *mut sqlite3_stmt, i: c_int) -> *const c_uchar;
         pub fn sqlite3_column_bytes(stmt: *mut sqlite3_stmt, i: c_int) -> c_int;
         pub fn sqlite3_errmsg(db: *mut sqlite3) -> *const c_char;
+        pub fn sqlite3_db_handle(stmt: *mut sqlite3_stmt) -> *mut sqlite3;
+        pub fn sqlite3_data_count(stmt: *mut sqlite3_stmt) -> c_int;
     }
 }
 
@@ -93,6 +103,57 @@ mod _core {
         run_query(py, db, sql)
     }
 
+    /// Return the raw `sqlite3_stmt*` backing `cursor` as a
+    /// `ctypes.c_void_p`, the cursor-level counterpart to
+    /// `get_raw_db_ptr`. SQLite has no cursor object of its own -- a DB-API
+    /// cursor is a prepared statement -- so this is a `sqlite3_stmt*`, which
+    /// is what an FFI caller passes to `sqlite3_step`, `sqlite3_column_*`
+    /// and friends. `cursor` must come from `sqlite_rs.sqlite3`, for the
+    /// same struct-layout reason as `query_via_rust`.
+    #[pyfunction]
+    fn get_raw_stmt_ptr(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let addr = cursor_stmt(py, &cursor)? as usize;
+        let c_void_p = py.import("ctypes")?.getattr("c_void_p")?;
+        Ok(c_void_p.call1((addr,))?.unbind())
+    }
+
+    /// Drain `cursor`'s underlying statement from the Rust side and return
+    /// the rows, decoding columns exactly as `query_via_rust` does.
+    ///
+    /// This steps the very same `sqlite3_stmt*` the Python cursor iterates,
+    /// so the two share position: rows returned here are rows the cursor
+    /// will no longer yield, and a cursor already exhausted returns none.
+    /// That shared state is the point -- it is the cursor-level equivalent
+    /// of two consumers sharing one live connection.
+    #[pyfunction]
+    fn fetch_all(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+        let stmt = cursor_stmt(py, &cursor)?;
+        let rows = collect_rows(py, stmt);
+        // Unconditionally, including on error: a drained statement left in
+        // place would abort the interpreter on the cursor's next use.
+        unsafe { sqlite_ffi::sqlite_rs_cursor_release_stmt(cursor.as_ptr()) };
+        rows
+    }
+
+    /// `fetch_all` against a raw `sqlite3_stmt*`, as returned by
+    /// `get_raw_stmt_ptr` or by an unrelated FFI caller's own
+    /// `sqlite3_prepare_v2`. The mirror of `query_via_raw_pointer`: an
+    /// arbitrary pointer is trusted as-is, per its documented contract.
+    ///
+    /// If the pointer came from a live Python cursor, that cursor must not be
+    /// used afterwards. Only a pointer is passed here, so there is no cursor
+    /// to put back in order -- and CPython aborts on a statement drained
+    /// behind its back (see `fetch_all`). Prefer `fetch_all(cursor)`, which
+    /// leaves the cursor correctly exhausted.
+    #[pyfunction]
+    fn fetch_all_via_raw_pointer(py: Python<'_>, stmt_ptr: usize) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+        let stmt = stmt_ptr as *mut sqlite3_stmt;
+        if stmt.is_null() {
+            return Err(PyValueError::new_err("stmt_ptr is null"));
+        }
+        collect_rows(py, stmt)
+    }
+
     /// `connection` must be an instance of `sqlite_rs.sqlite3.Connection`
     /// (this project's own clone of CPython's sqlite3 module), not the
     /// stdlib `sqlite3.Connection`: the shim below extracts the raw
@@ -128,6 +189,27 @@ mod _core {
         Ok(db)
     }
 
+    /// Same struct-layout requirement as `connection_db`: the shim reads
+    /// CPython's private Cursor layout, which only matches for cursors from
+    /// this package's own compiled clone module.
+    fn cursor_stmt(py: Python<'_>, cursor: &Bound<'_, PyAny>) -> PyResult<*mut sqlite3_stmt> {
+        let cursor_type = py.import("sqlite_rs.sqlite3")?.getattr("Cursor")?;
+        if !cursor.is_instance(&cursor_type)? {
+            return Err(PyTypeError::new_err(
+                "cursor must be a Cursor from sqlite_rs.sqlite3 (sqlite_rs's own sqlite3 \
+                 clone), not the stdlib sqlite3 module",
+            ));
+        }
+        let stmt = unsafe { sqlite_ffi::sqlite_rs_get_cursor_stmt(cursor.as_ptr()) };
+        if stmt.is_null() {
+            return Err(PyValueError::new_err(
+                "cursor has no underlying sqlite3_stmt* (has it executed a statement, and is \
+                 it still open?)",
+            ));
+        }
+        Ok(stmt)
+    }
+
     fn run_query(py: Python<'_>, db: *mut sqlite_ffi::sqlite3, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
         let c_sql = CString::new(sql).map_err(|e| PyValueError::new_err(e.to_string()))?;
         let mut stmt: *mut sqlite3_stmt = std::ptr::null_mut();
@@ -141,28 +223,45 @@ mod _core {
             )));
         }
 
+        let rows = collect_rows(py, stmt);
+        unsafe { sqlite_ffi::sqlite3_finalize(stmt) };
+        rows
+    }
+
+    /// Step an already-prepared statement to exhaustion and decode its rows.
+    /// Never finalizes: `run_query` owns the statements it prepares, while a
+    /// cursor's statement belongs to the cursor.
+    fn collect_rows(py: Python<'_>, stmt: *mut sqlite3_stmt) -> PyResult<Vec<Vec<Py<PyAny>>>> {
         let mut rows = Vec::new();
+        // A DB-API cursor's statement is already positioned on a row, because
+        // execute() steps once; a freshly prepared one is not. Stepping first
+        // in the former case would silently drop the first row.
+        if unsafe { sqlite_ffi::sqlite3_data_count(stmt) } > 0 {
+            rows.push(read_row(py, stmt)?);
+        }
         loop {
             let rc = unsafe { sqlite_ffi::sqlite3_step(stmt) };
             if rc == sqlite_ffi::SQLITE_ROW {
-                let n = unsafe { sqlite_ffi::sqlite3_column_count(stmt) };
-                let mut row = Vec::with_capacity(n as usize);
-                for i in 0..n {
-                    row.push(column_value(py, stmt, i)?);
-                }
-                rows.push(row);
+                rows.push(read_row(py, stmt)?);
             } else if rc == sqlite_ffi::SQLITE_DONE {
-                break;
+                return Ok(rows);
             } else {
-                unsafe { sqlite_ffi::sqlite3_finalize(stmt) };
+                let db = unsafe { sqlite_ffi::sqlite3_db_handle(stmt) };
                 return Err(PyValueError::new_err(format!(
                     "sqlite3_step failed ({rc}): {}",
                     sqlite_errmsg(db)
                 )));
             }
         }
-        unsafe { sqlite_ffi::sqlite3_finalize(stmt) };
-        Ok(rows)
+    }
+
+    fn read_row(py: Python<'_>, stmt: *mut sqlite3_stmt) -> PyResult<Vec<Py<PyAny>>> {
+        let n = unsafe { sqlite_ffi::sqlite3_column_count(stmt) };
+        let mut row = Vec::with_capacity(n as usize);
+        for i in 0..n {
+            row.push(column_value(py, stmt, i)?);
+        }
+        Ok(row)
     }
 
     fn sqlite_errmsg(db: *mut sqlite_ffi::sqlite3) -> String {
