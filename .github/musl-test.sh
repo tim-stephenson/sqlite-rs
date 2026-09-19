@@ -4,17 +4,19 @@
 # test-musllinux-* jobs in workflows/CI.yml, which pass $VERSIONS (the
 # config job's musllinux_1_1_inherited list, e.g. "3.11 3.12 3.13").
 #
-# The interpreters live at /opt/python/cp<XY>-cp<XY>/bin/python; there is no
-# python on PATH in these images, and no uv, so each version installs with
-# its own pip.
+# The interpreters live at /opt/python/<python tag>-<abi tag>/bin/python, the
+# PEP 425 tag pair -- so 3.11 is cp311-cp311 but free-threaded 3.15t is
+# cp315-cp315t, NOT cp315t-cp315t. There is no python on PATH in these images,
+# and no uv, so each version installs with its own pip.
 set -eu
 
 : "${VERSIONS:?VERSIONS must be set by the calling workflow}"
 status=0
 
 for v in $VERSIONS; do
-    tag="cp$(echo "$v" | tr -d .)"
-    py="/opt/python/$tag-$tag/bin/python"
+    abi="cp$(echo "$v" | tr -d .)"
+    pytag="cp$(echo "$v" | tr -d . | tr -d t)"
+    py="/opt/python/$pytag-$abi/bin/python"
 
     if [ ! -x "$py" ]; then
         echo "::error::no interpreter for Python $v at $py"
