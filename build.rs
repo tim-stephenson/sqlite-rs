@@ -152,7 +152,7 @@ struct CrossPython {
 /// Python's headers while compiling with a musl cross-compiler.
 ///
 /// manylinux/musllinux Docker images install every supported target
-/// interpreter -- CPython (e.g. `cp310-cp310/`) *and* PyPy (e.g.
+/// interpreter -- CPython (e.g. `cp311-cp311/`) *and* PyPy (e.g.
 /// `pp311-pypy311_pp73/`) alike -- under the same `/opt/python` root; PyPy
 /// does not get a separate `/opt/pypy` (an earlier, unverified assumption
 /// here that never actually got exercised, since native builds never call
@@ -350,8 +350,8 @@ fn python_query(python: &str, code: &str) -> String {
 /// The `.c` files directly under `cpython_sqlite_dir` (not `clinic/`, which
 /// holds generated `.c.h` headers, not translation units). Discovered
 /// rather than hardcoded because the source set varies by CPython minor
-/// version -- e.g. 3.10 has `cache.c` instead of `blob.c` (the `Blob` type
-/// was added in 3.11).
+/// version (files are added and removed between releases), so any fixed
+/// list would silently rot as vendored versions come and go.
 fn clone_module_sources(cpython_sqlite_dir: &Path) -> Vec<PathBuf> {
     let mut sources: Vec<PathBuf> = fs::read_dir(cpython_sqlite_dir)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", cpython_sqlite_dir.display()))
@@ -627,8 +627,8 @@ fn main() {
 
     // Wipe any previous build's output before writing this one's: nothing
     // here ever removes stale files on its own, only overwrites specific
-    // known names, so a directory that's built for e.g. cp310 and then
-    // cp311 without cleaning in between ends up with *both* interpreters'
+    // known names, so a directory that's built for e.g. cp311 and then
+    // cp312 without cleaning in between ends up with *both* interpreters'
     // _sqlite3*.so (and any __pycache__ left by actually importing the
     // module, e.g. during pytest) still sitting there when the second
     // wheel gets packaged -- confirmed in practice: maturin builds every

@@ -19,6 +19,124 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Single source of truth for which Python versions this project supports.
+  #
+  # GitHub Actions has no YAML anchors, so the only way to write a list once
+  # and read it from several jobs is to emit it as job outputs and have every
+  # consumer declare `needs: config`. Every other job below derives its
+  # version list from here rather than spelling one out.
+  #
+  # Each output is the canonical list minus a named, commented exclusion set,
+  # so adding or dropping a Python version is a one-line change to ALL and
+  # every deviation from it stays explicit about *why* it deviates.
+  # ---------------------------------------------------------------------------
+  config:
+    runs-on: ubuntu-latest
+    outputs:
+      # JSON arrays, for `matrix: python-version: ${{ fromJSON(...) }}`.
+      all: ${{ steps.versions.outputs.all }}
+      tested: ${{ steps.versions.outputs.tested }}
+      tested_windows: ${{ steps.versions.outputs.tested_windows }}
+      # Newline-separated, for actions/setup-python's multi-version input.
+      all_lines: ${{ steps.versions.outputs.all_lines }}
+      # Space-separated, for maturin's `--interpreter`.
+      all_spaced: ${{ steps.versions.outputs.all_spaced }}
+      cpython_source_built_spaced: ${{ steps.versions.outputs.cpython_source_built_spaced }}
+      musllinux_1_1_inherited_spaced: ${{ steps.versions.outputs.musllinux_1_1_inherited_spaced }}
+    steps:
+      - id: versions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # >>> THE canonical list. Add or drop a Python version HERE, and
+          # >>> nowhere else in this file.
+          ALL="3.11 3.12 3.13 3.14 3.15 3.15t"
+
+          # CPython only -- PyPy is deliberately not a supported target and is
+          # neither built nor tested anywhere in this workflow. Every list
+          # below is an explicit subset of ALL for exactly this reason: the
+          # alternative, --find-interpreter, builds whatever an image happens
+          # to carry, which silently pulled PyPy wheels into the linux legs.
+          # (build.rs still carries PyPy handling for local/manual builds; it
+          # is simply never exercised here.)
+
+          # emit <output-name> [versions to exclude...]
+          #
+          # Writes three forms of ALL-minus-exclusions: a JSON array (for
+          # matrix expansion), a space-separated string (for maturin) and a
+          # newline-separated one (for setup-python).
+          emit() {
+            local name="$1"; shift
+            local excluded=" $* "
+            local keep="" v
+            for v in $ALL; do
+              case "$excluded" in
+                *" $v "*) continue ;;
+              esac
+              keep="${keep:+$keep }$v"
+            done
+            {
+              printf '%s=%s\n' "$name" \
+                "$(printf '%s\n' $keep | jq -Rsc 'split("\n") | map(select(length > 0))')"
+              printf '%s_spaced=%s\n' "$name" "$keep"
+              printf '%s_lines<<__EOF__\n' "$name"
+              printf '%s\n' $keep
+              printf '__EOF__\n'
+            } >> "$GITHUB_OUTPUT"
+            printf '%-24s %s\n' "$name" "$keep" >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          {
+            echo '### Python versions'
+            echo
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          emit all
+
+          # Which interpreters a builder image actually carries comes down to
+          # how that image got its /opt/python, and there are exactly two
+          # deficient cases (see rust-cross/manylinux-cross's render.py, which
+          # decides this per target):
+          #
+          #   1. Targets with no upstream PyPA image to copy from -- glibc
+          #      armv7 and musl armv7 -- have rust-cross compile CPython
+          #      from source in the Dockerfile. That list is pinned at
+          #      3.9.25/3.10.20/3.11.15/3.12.13/3.13.14/3.14.6, with no
+          #      free-threaded build of any version. So: no 3.15, no 3.15t.
+          emit cpython_source_built 3.15 3.15t
+
+          #   2. musl x86_64/i686/aarch64 copy /opt/python straight out of
+          #      quay.io/pypa/musllinux_1_1_<arch> -- an image PyPA declared
+          #      end-of-life on 2024-11-01, whose final build was published
+          #      2024-10-26. CPython 3.14 did not exist yet on that date, so
+          #      those images are frozen at 3.13 and always will be. (musl
+          #      armv7 is unaffected: it falls under case 1 above and does get
+          #      3.14.) Fixing this properly is upstream's call -- rust-cross
+          #      would need to copy from musllinux_1_2 -- or it needs the
+          #      native PyPA musllinux_1_2 image under QEMU, which is the
+          #      slowness this matrix was reworked to avoid.
+          emit musllinux_1_1_inherited 3.14 3.15 3.15t
+
+          # Everything sqlite-rs builds is now also testable: the package has
+          # no runtime dependencies at all, so a wheel plus the `test` group
+          # (pytest, and pywin32 on win32) is the whole install. This used to
+          # exclude 3.15/3.15t because pyarrow had no wheel for either and
+          # could not build from source -- that dependency has since been
+          # dropped.
+          emit tested
+
+          # Windows is the one exception: the test group's pywin32 -- needed
+          # only on win32 -- has no free-threaded wheel for any CPython
+          # version yet (confirmed in CI: "no wheels ... with Python ABI
+          # tags: cp39, cp310, cp311, cp312, cp313, cp314, cp315" -- no
+          # cp314t/cp315t), so 3.15t builds on Windows but isn't tested there.
+          emit tested_windows 3.15t
+
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
   ruff:
     runs-on: ubuntu-latest
     steps:
@@ -46,73 +164,67 @@ jobs:
 
   linux:
     runs-on: ${{ matrix.platform.runner }}
+    needs: config
     strategy:
       fail-fast: false
       matrix:
         platform:
+          # manylinux_2_28 (glibc 2.28, RHEL 8 era) is this project's declared
+          # floor everywhere, rather than maturin-action's `auto`
+          # (manylinux2014 / glibc 2.17). PyPA publishes an actively-built
+          # manylinux_2_28_i686 as well as _x86_64, and both carry the full
+          # CPython set, so nothing is lost by raising the floor here.
           - runner: ubuntu-22.04
             target: x86_64
-            manylinux: auto
-            args: --release --out dist --find-interpreter --auditwheel=warn
+            manylinux: "2_28"
+            interpreter: ${{ needs.config.outputs.all_spaced }}
           - runner: ubuntu-22.04
             target: x86
-            manylinux: auto
-            args: --release --out dist --find-interpreter --auditwheel=warn
-          # s390x/ppc64le/armv7: manylinux2014-cross's bundled cross-gcc is too
-          # old to ship stdatomic.h, which CPython 3.13+'s mimalloc allocator
-          # requires -- manylinux_2_28-cross bundles a newer one that has it
-          # (verified against ghcr.io/rust-cross/manylinux_2_28-cross's actual
-          # published tags -- it covers armv7 even though PyPA doesn't publish
-          # a *native* manylinux_2_28_armv7l image). aarch64 used to be built
+            manylinux: "2_28"
+            interpreter: ${{ needs.config.outputs.all_spaced }}
+          # armv7: manylinux2014-cross's bundled cross-gcc is too old to ship
+          # stdatomic.h, which CPython 3.13+'s mimalloc allocator requires --
+          # manylinux_2_28-cross bundles a newer one that has it (verified
+          # against ghcr.io/rust-cross/manylinux_2_28-cross's actual published
+          # tags -- it covers armv7 even though PyPA doesn't publish a
+          # *native* manylinux_2_28_armv7l image). aarch64 used to be built
           # here too via manylinux_2_28-cross, but ubuntu-24.04-arm (a genuine
           # ARM64 GitHub-hosted runner) lets it build and test natively
           # instead -- no cross-gcc, no QEMU -- see the linux-aarch64 job
-          # below.
+          # below. s390x and ppc64le were dropped outright: both are niche
+          # enough that most of the scientific/Rust-extension ecosystem
+          # (numpy, scipy, pandas, orjson, grpcio) ships no wheels for them.
           #
-          # maturin's --find-interpreter doesn't actually scan these *-cross
-          # images' filesystem for what interpreters are really present -- it
-          # optimistically assumes a fixed set of "commonly available" tags
-          # for the target triple and tries all of them regardless, so it
-          # always attempts (and fails) a build for whichever aren't really
-          # there instead of skipping them. What's empirically confirmed
-          # present (by which CPython/CPython+free-threaded/PyPy builds
-          # actually succeeded here) varies per architecture -- PyPy isn't
-          # published upstream at all for these three, and free-threaded 3.14
-          # is missing for s390x/armv7 too -- so each needs its own explicit
-          # -i list of proven-working interpreters instead of
-          # --find-interpreter's unverified guess.
-          - runner: ubuntu-22.04
-            target: s390x
-            manylinux: "2_28"
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 --auditwheel=warn
-          - runner: ubuntu-22.04
-            target: ppc64le
-            manylinux: "2_28"
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t --auditwheel=warn
+          # An explicit `--interpreter` list rather than --find-interpreter:
+          # the latter doesn't actually scan these *-cross images' filesystem
+          # for what interpreters are really present -- it optimistically
+          # assumes a fixed set of "commonly available" tags for the target
+          # triple and tries all of them regardless, so it always attempts
+          # (and fails) a build for whichever aren't really there instead of
+          # skipping them. What each image really carries is encoded in the
+          # config job's outputs.
           - runner: ubuntu-22.04
             target: armv7
             manylinux: "2_28"
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 --auditwheel=warn
+            interpreter: ${{ needs.config.outputs.cpython_source_built_spaced }}
           # riscv64 needs glibc new enough to have riscv64 support at all -- PyPA's
           # oldest riscv64 baseline is manylinux_2_39 (verified: no PyPA image
           # exists for any older manylinux_2_* tag).
           #
-          # Unlike aarch64/s390x/ppc64le/armv7, `manylinux: "2_39"` alone picked
+          # Unlike aarch64/armv7, `manylinux: "2_39"` alone picked
           # the *native* quay.io/pypa/manylinux_2_39_riscv64 image instead of the
           # *-cross one -- maturin-action's target-to-cross-image auto-mapping
           # apparently doesn't cover riscv64 yet, and running a genuine riscv64
           # container with no QEMU registered in this job fails immediately
           # ("exec format error"). Point at the -cross image explicitly instead.
           #
-          # All 6 CPython versions built successfully there -- only PyPy 3.11
-          # fails (PyPy doesn't publish riscv64 builds at all, same as
-          # s390x/ppc64le/armv7 above), so pin the same kind of explicit -i
-          # list rather than --find-interpreter's unverified guess.
+          # Its image copies /opt/python from the supported PyPA
+          # manylinux_2_39_riscv64, so it carries the full CPython set.
           - runner: ubuntu-22.04
             target: riscv64
             manylinux: "2_39"
             container: ghcr.io/rust-cross/manylinux_2_39-cross:riscv64
-            args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 -i python3.14 -i python3.14t --auditwheel=warn
+            interpreter: ${{ needs.config.outputs.all_spaced }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -152,7 +264,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: ${{ matrix.platform.args }}
+          args: --release --out dist --auditwheel=warn --interpreter ${{ matrix.platform.interpreter }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: ${{ matrix.platform.manylinux }}
           container: ${{ matrix.platform.container }}
@@ -184,12 +296,18 @@ jobs:
     # and the runner's own arch already matches the target) and then actually
     # install and test the resulting wheel, no QEMU or cross-gcc involved.
     runs-on: ubuntu-24.04-arm
+    needs: config
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
       - uses: astral-sh/setup-uv@v7
+      # manylinux_2_28_aarch64's /opt/python carries the same interpreter set
+      # as the manylinux_2_28-cross images the linux job's other targets use
+      # (confirmed from this job's own build log), so it shares their config
+      # output rather than the full canonical list.
+      #
       # --auditwheel=warn: see the matching comment in the linux job -- same
       # risk of maturin's manylinux auto-repair relocating libsqlite3 into a
       # private copy for _core alone, regardless of native vs cross build.
@@ -197,7 +315,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: aarch64
-          args: --release --out dist --find-interpreter --auditwheel=warn
+          args: >-
+            --release --out dist --auditwheel=warn
+            --interpreter ${{ needs.config.outputs.all_spaced }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: "2_28"
       # Tested in its own dedicated test-linux-aarch64 job below (one job per
@@ -210,22 +330,31 @@ jobs:
 
   musllinux:
     runs-on: ${{ matrix.platform.runner }}
+    needs: config
     strategy:
       fail-fast: false
       matrix:
         platform:
+          # x86_64/i686/aarch64 inherit /opt/python from the EOL
+          # musllinux_1_1 images and so stop at 3.13; armv7 has its CPythons
+          # compiled from source by rust-cross instead and reaches 3.14. See
+          # the config job for both mechanisms.
           - runner: ubuntu-22.04
             target: x86_64
             cross_arch: x86_64
+            interpreter: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
           - runner: ubuntu-22.04
             target: x86
             cross_arch: i686
+            interpreter: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
           - runner: ubuntu-22.04
             target: aarch64
             cross_arch: aarch64
+            interpreter: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
           - runner: ubuntu-22.04
             target: armv7
             cross_arch: armv7
+            interpreter: ${{ needs.config.outputs.cpython_source_built_spaced }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -242,14 +371,11 @@ jobs:
       # directory layout instead of executing the (possibly foreign-architecture)
       # interpreter, so no target Python needs to actually run.
       #
-      # Explicit -i list instead of --find-interpreter: this image's bundled
-      # version set tops out at 3.13 (confirmed by the *native*,
-      # QEMU-emulated musllinux_1_2 image successfully building 3.10-3.15/
-      # 3.14t/3.15t, while this fast -cross image fails past 3.13 on every
-      # target) and doesn't have PyPy at all (musl has no PyPy builds
-      # upstream, on any architecture) -- but --find-interpreter doesn't
-      # actually verify what's present in *-cross images before attempting a
-      # build, so it always tries (and fails on) both regardless.
+      # Explicit `--interpreter` list instead of --find-interpreter: these
+      # images' interpreter sets are capped (differently per target, see the
+      # matrix above), but --find-interpreter doesn't actually verify what's
+      # present in *-cross images before attempting a build, so it always
+      # tries (and fails on) the versions that aren't there.
       #
       # --auditwheel=warn: see the matching comment in the linux job -- same
       # risk of maturin relocating libsqlite3 into a private copy for _core
@@ -261,7 +387,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: --release --out dist -i python3.10 -i python3.11 -i python3.12 -i python3.13 --auditwheel=warn
+          args: >-
+            --release --out dist --auditwheel=warn
+            --interpreter ${{ matrix.platform.interpreter }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
           container: ghcr.io/rust-cross/musllinux_1_2-cross:${{ matrix.platform.cross_arch }}
@@ -279,6 +407,7 @@ jobs:
 
   windows:
     runs-on: ${{ matrix.platform.runner }}
+    needs: config
     strategy:
       fail-fast: false
       matrix:
@@ -294,30 +423,30 @@ jobs:
             python_arch: arm64
     steps:
       - uses: actions/checkout@v6
-      # Explicit -i list of exact interpreter paths below, instead of
-      # --find-interpreter, because of a real collision hit in CI: once both
-      # a regular and a free-threaded build of the same X.Y version were
-      # installed (e.g. plain "3.14" and "3.14t"), --find-interpreter only
-      # ever found the free-threaded one -- confirmed from build logs, this
-      # runner's actions/setup-python evidently registers a free-threaded
-      # install in a way that shadows the regular one of the same version,
-      # so plain "CPython 3.14"/"3.15" silently vanished from what got
-      # built. update-environment: false on every step below keeps each
-      # install from touching PATH/registry at all, so only the explicit -i
-      # paths (captured via each step's own python-path output) matter --
-      # no discovery, no shadowing, no dependence on install order.
+      # This is the one job that can't read its version list from the config
+      # job: it needs each interpreter's exact path, which only a per-version
+      # actions/setup-python step exposes (its `python-path` output), and
+      # Actions has no way to loop over a `uses:` step. The guard step below
+      # fails the job if these hardcoded versions ever drift from the
+      # canonical list, so the config job stays authoritative even here.
       #
-      # 3.10 is skipped on windows-11-arm: CPython's official Windows ARM64
-      # installers only started at 3.11 (there is no 3.10 arm64 build to
-      # install at all), so that one step is allowed to fail there without
-      # failing the job.
-      - id: py310
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.10"
-          architecture: ${{ matrix.platform.python_arch }}
-          update-environment: false
-        continue-on-error: ${{ matrix.platform.target == 'aarch64' }}
+      # Exact interpreter paths rather than bare version numbers (which is
+      # what every other job passes maturin) because of a real collision hit
+      # in CI: once both a regular and a free-threaded build of the same X.Y
+      # version were installed (e.g. plain "3.15" and "3.15t"), interpreter
+      # *discovery* only ever found the free-threaded one -- confirmed from
+      # build logs, this runner's actions/setup-python evidently registers a
+      # free-threaded install in a way that shadows the regular one of the
+      # same version, so plain "CPython 3.14"/"3.15" silently vanished from
+      # what got built. update-environment: false on every step below keeps
+      # each install from touching PATH/registry at all, so only the explicit
+      # paths matter -- no discovery, no shadowing, no dependence on install
+      # order.
+      #
+      # Every version below installs on all three targets, including
+      # windows-11-arm: CPython's official Windows ARM64 installers start at
+      # 3.11, which is now also this project's own minimum, so no step here
+      # needs to be allowed to fail.
       - id: py311
         uses: actions/setup-python@v6
         with:
@@ -349,12 +478,6 @@ jobs:
           architecture: ${{ matrix.platform.python_arch }}
           allow-prereleases: true
           update-environment: false
-      - id: py314t
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14t"
-          architecture: ${{ matrix.platform.python_arch }}
-          update-environment: false
       - id: py315t
         uses: actions/setup-python@v6
         with:
@@ -363,23 +486,37 @@ jobs:
           allow-prereleases: true
           update-environment: false
       - uses: astral-sh/setup-uv@v7
-      # Builds the -i list from each setup-python step's own python-path
-      # output, skipping any that didn't run/install (empty output) -- e.g.
-      # 3.10 on windows-11-arm above -- rather than passing maturin a
-      # literal "-i" with nothing after it.
+      # Keeps the hardcoded steps above honest against the config job, since
+      # they're the one place the canonical list has to be repeated.
+      - name: Check interpreter steps match the canonical list
+        shell: bash
+        run: |
+          set -euo pipefail
+          declared="3.11 3.12 3.13 3.14 3.15 3.15t"
+          canonical="${{ needs.config.outputs.all_spaced }}"
+          if [ "$declared" != "$canonical" ]; then
+            echo "::error::The setup-python steps in this job are out of sync with the config job."
+            echo "  steps declare: $declared"
+            echo "  config job:    $canonical"
+            echo "Add or remove a setup-python step above (and update this guard) to match."
+            exit 1
+          fi
+      # Builds the interpreter list from each setup-python step's own
+      # python-path output. Every step above is expected to install on all
+      # three targets, so the empty-output check is now only a guard against
+      # passing maturin a literal flag with nothing after it.
       - name: Compute interpreter list
         id: interpreters
         shell: bash
         run: |
+          set -euo pipefail
           args="--release --out dist"
           for p in \
-            "${{ steps.py310.outputs.python-path }}" \
             "${{ steps.py311.outputs.python-path }}" \
             "${{ steps.py312.outputs.python-path }}" \
             "${{ steps.py313.outputs.python-path }}" \
             "${{ steps.py314.outputs.python-path }}" \
             "${{ steps.py315.outputs.python-path }}" \
-            "${{ steps.py314t.outputs.python-path }}" \
             "${{ steps.py315t.outputs.python-path }}"; do
             if [ -n "$p" ]; then
               args="$args -i $p"
@@ -394,11 +531,11 @@ jobs:
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # All three targets run natively here (windows-11-arm is a genuine
       # ARM64 runner, not emulated, and x86 runs at native speed under
-      # WOW64), but only x64 is tested (in its own dedicated
-      # test-windows-x64 job below): pyarrow (a sqlite-rs runtime dependency)
-      # publishes no wheels for win32 or win_arm64 at all, and falls back to
-      # a from-source scikit-build-core/CMake build that fails outright
-      # without the full Arrow C++ toolchain (confirmed in CI).
+      # WOW64), but only x64 is tested, in its own dedicated
+      # test-windows-x64 job below. Now that sqlite-rs has no runtime
+      # dependencies, win32 and win_arm64 are testable too -- adding those
+      # jobs is a straightforward follow-up, weighed against the README's
+      # note that Windows runners queue rather than run in parallel.
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
@@ -407,6 +544,7 @@ jobs:
 
   macos:
     runs-on: ${{ matrix.platform.runner }}
+    needs: config
     strategy:
       matrix:
         platform:
@@ -416,81 +554,26 @@ jobs:
             target: aarch64
     steps:
       - uses: actions/checkout@v6
-      # See the matching comment in the windows job: explicit -i list of
-      # exact interpreter paths, not --find-interpreter, because installing
-      # both a regular and free-threaded build of the same X.Y version (e.g.
-      # "3.14"/"3.14t") made --find-interpreter only ever find the
-      # free-threaded one, silently dropping plain "CPython 3.14"/"3.15"
-      # from what got built (confirmed from build logs). update-environment:
-      # false keeps every install below from touching PATH at all, so only
-      # the explicit -i paths (each step's own python-path output) matter.
-      - id: py310
-        uses: actions/setup-python@v6
+      # One multi-version setup-python step fed straight from the config job,
+      # rather than the windows job's one-step-per-version block. macOS can
+      # do this because every install puts a distinctly-named binary on PATH
+      # (python3.15 and python3.15t are separate names), so maturin's
+      # `--interpreter 3.15 3.15t` below resolves each unambiguously -- the
+      # registry-shadowing problem documented in the windows job is specific
+      # to how Windows installs register themselves, not to maturin.
+      #
+      # allow-prereleases only affects versions with no GA release yet (3.15/
+      # 3.15t), so it's harmless to apply to the whole list at once.
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.10"
-          update-environment: false
-      - id: py311
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-          update-environment: false
-      - id: py312
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-          update-environment: false
-      - id: py313
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.13"
-          update-environment: false
-      - id: py314
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14"
-          update-environment: false
-      - id: py315
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.15"
+          python-version: ${{ needs.config.outputs.all_lines }}
           allow-prereleases: true
-          update-environment: false
-      - id: py314t
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.14t"
-          update-environment: false
-      - id: py315t
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.15t"
-          allow-prereleases: true
-          update-environment: false
       - uses: astral-sh/setup-uv@v7
-      - name: Compute interpreter list
-        id: interpreters
-        shell: bash
-        run: |
-          args="--release --out dist"
-          for p in \
-            "${{ steps.py310.outputs.python-path }}" \
-            "${{ steps.py311.outputs.python-path }}" \
-            "${{ steps.py312.outputs.python-path }}" \
-            "${{ steps.py313.outputs.python-path }}" \
-            "${{ steps.py314.outputs.python-path }}" \
-            "${{ steps.py315.outputs.python-path }}" \
-            "${{ steps.py314t.outputs.python-path }}" \
-            "${{ steps.py315t.outputs.python-path }}"; do
-            if [ -n "$p" ]; then
-              args="$args -i $p"
-            fi
-          done
-          echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.platform.target }}
-          args: ${{ steps.interpreters.outputs.args }}
+          args: --release --out dist --interpreter ${{ needs.config.outputs.all_spaced }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       # Both targets run natively here (macos-15-intel is genuinely x86_64,
       # macos-latest is genuinely Apple Silicon), no QEMU concern. Tested in
@@ -503,29 +586,23 @@ jobs:
           path: dist
 
   # One test job per native platform, each with its own Python-version
-  # matrix instead of a single "3.x" -- installing/testing every wheel each
-  # build job actually produced (confirmed per-platform from build logs, not
-  # assumed), rather than only whichever interpreter that job's own
-  # setup-python happened to resolve. Separate jobs (not extra steps in the
-  # build jobs above) so a version's setup-python/install/test doesn't force
-  # a matrix dimension onto the build step itself, which already builds
-  # every version in one maturin invocation via --find-interpreter.
+  # matrix expanded from the config job -- installing/testing every wheel
+  # each build job actually produced, rather than only whichever interpreter
+  # that job's own setup-python happened to resolve. Separate jobs (not extra
+  # steps in the build jobs above) so a version's setup-python/install/test
+  # doesn't force a matrix dimension onto the build step itself, which
+  # already builds every version in one maturin invocation.
   #
-  # 3.15/3.15t/pypy3.11 are built (see the linux job above) but deliberately
-  # not tested here: pyarrow (a sqlite-rs runtime dependency, kept even
-  # though nothing in the codebase uses it yet -- it's needed soon) has no
-  # prebuilt wheel for any of the three, and fails building from source for
-  # each (PyPy: missing Arrow C++ toolchain; 3.15/3.15t: a libcst build
-  # dependency's own PyO3 version doesn't recognize either yet) -- confirmed
-  # in CI, an upstream availability gap rather than anything sqlite-rs or
-  # this workflow can fix.
+  # See the config job for why `tested` drops 3.15/3.15t, and why
+  # `tested_windows` is kept as a separate output even though it currently
+  # resolves to the same list.
   test-linux-x86_64:
-    needs: linux
+    needs: [config, linux]
     runs-on: ubuntu-22.04
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
+        python-version: ${{ fromJSON(needs.config.outputs.tested) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -543,19 +620,13 @@ jobs:
       - name: Run tests
         run: pytest tests/
 
-  # manylinux_2_28_aarch64's /opt/python has the same interpreter set as the
-  # manylinux-cross images the linux job's other targets use (confirmed from
-  # this job's own build log), so the same Python-version list applies --
-  # see the matching comment on test-linux-x86_64 for why 3.15/3.15t/
-  # pypy3.11 are built but not tested (pyarrow has no wheel and can't build
-  # from source for any of the three).
   test-linux-aarch64:
-    needs: linux-aarch64
+    needs: [config, linux-aarch64]
     runs-on: ubuntu-24.04-arm
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
+        python-version: ${{ fromJSON(needs.config.outputs.tested) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -573,17 +644,13 @@ jobs:
       - name: Run tests
         run: pytest tests/
 
-  # macOS's build job builds 3.10-3.15 and the two free-threaded builds
-  # (3.14t/3.15t), but 3.15/3.15t aren't tested here -- see the matching
-  # comment on test-linux-x86_64: pyarrow has no wheel and can't build from
-  # source for either.
   test-macos-x86_64:
-    needs: macos
+    needs: [config, macos]
     runs-on: macos-15-intel
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
+        python-version: ${{ fromJSON(needs.config.outputs.tested) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -602,12 +669,12 @@ jobs:
         run: pytest tests/
 
   test-macos-aarch64:
-    needs: macos
+    needs: [config, macos]
     runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.14t"]
+        python-version: ${{ fromJSON(needs.config.outputs.tested) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
@@ -625,20 +692,13 @@ jobs:
       - name: Run tests
         run: pytest tests/
 
-  # Same story as macOS: windows's build job builds 3.10-3.15/3.14t/3.15t,
-  # but 3.15/3.15t aren't tested here for the same pyarrow reason. 3.14t is
-  # also excluded here specifically (still tested on linux/macos): the test
-  # dependency group's pywin32 -- needed only on win32 -- has no free-
-  # threaded wheel for any CPython version yet (confirmed in CI: "no wheels
-  # ... with Python ABI tags: cp39, cp310, cp311, cp312, cp313, cp314,
-  # cp315" -- no cp314t/cp315t).
   test-windows-x64:
-    needs: windows
+    needs: [config, windows]
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ${{ fromJSON(needs.config.outputs.tested_windows) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7
