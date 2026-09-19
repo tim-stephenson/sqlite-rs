@@ -95,11 +95,8 @@ mod _core {
     /// functions above, there's no type to check here -- an arbitrary raw
     /// pointer is trusted as-is, per its documented contract.
     #[pyfunction]
-    fn query_via_raw_pointer(py: Python<'_>, db_ptr: usize, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-        let db = db_ptr as *mut sqlite_ffi::sqlite3;
-        if db.is_null() {
-            return Err(PyValueError::new_err("db_ptr is null"));
-        }
+    fn query_via_raw_pointer(py: Python<'_>, db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+        let db = raw_pointer(&db_ptr, "db_ptr")? as *mut sqlite_ffi::sqlite3;
         run_query(py, db, sql)
     }
 
@@ -146,12 +143,30 @@ mod _core {
     /// behind its back (see `fetch_all`). Prefer `fetch_all(cursor)`, which
     /// leaves the cursor correctly exhausted.
     #[pyfunction]
-    fn fetch_all_via_raw_pointer(py: Python<'_>, stmt_ptr: usize) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-        let stmt = stmt_ptr as *mut sqlite3_stmt;
-        if stmt.is_null() {
-            return Err(PyValueError::new_err("stmt_ptr is null"));
+    fn fetch_all_via_raw_pointer(py: Python<'_>, stmt_ptr: Bound<'_, PyAny>) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+        collect_rows(py, raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut sqlite3_stmt)
+    }
+
+    /// Accept either a plain address or the `ctypes.c_void_p` that
+    /// `get_raw_db_ptr`/`get_raw_stmt_ptr` hand back, so a pointer can be
+    /// passed straight back in without unwrapping it. ctypes scalars keep
+    /// their address in `.value`, which is `None` for NULL; anything else is
+    /// read as an integer.
+    fn raw_pointer(obj: &Bound<'_, PyAny>, name: &str) -> PyResult<usize> {
+        let value = obj.getattr("value").unwrap_or_else(|_| obj.clone());
+        if value.is_none() {
+            return Err(PyValueError::new_err(format!("{name} is null")));
         }
-        collect_rows(py, stmt)
+        let addr: usize = value.extract().map_err(|_| {
+            PyTypeError::new_err(format!(
+                "{name} must be an int address or a ctypes pointer, not {}",
+                obj.get_type().name().map_or_else(|_| "?".to_string(), |n| n.to_string())
+            ))
+        })?;
+        if addr == 0 {
+            return Err(PyValueError::new_err(format!("{name} is null")));
+        }
+        Ok(addr)
     }
 
     /// `connection` must be an instance of `sqlite_rs.sqlite3.Connection`

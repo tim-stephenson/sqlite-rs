@@ -177,6 +177,26 @@ def test_cursor_functions_reject_a_cursor_that_never_executed() -> None:
             _ = call(cur)
 
 
+def test_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
+    # The c_void_p from get_raw_stmt_ptr goes straight back in, without .value.
+    cur = _conn().execute("SELECT a FROM t WHERE a > 1")
+
+    assert sqlite_rs.fetch_all_via_raw_pointer(sqlite_rs.get_raw_stmt_ptr(cur)) == [
+        [2],
+        [3],
+    ]
+
+    _ = sqlite_rs.fetch_all(cur)  # release; see the docstring's warning
+
+
 def test_fetch_all_via_raw_pointer_rejects_null() -> None:
-    with pytest.raises(ValueError, match="stmt_ptr is null"):
-        _ = sqlite_rs.fetch_all_via_raw_pointer(0)
+    # A null address, however it is spelled.
+    for null in (0, ctypes.c_void_p(), ctypes.c_void_p(0)):
+        with pytest.raises(ValueError, match="stmt_ptr is null"):
+            _ = sqlite_rs.fetch_all_via_raw_pointer(null)
+
+
+def test_fetch_all_via_raw_pointer_rejects_a_non_pointer() -> None:
+    with pytest.raises(TypeError, match="int address or a ctypes pointer"):
+        # Passing the wrong type is exactly what's under test.
+        _ = sqlite_rs.fetch_all_via_raw_pointer("nonsense")  # pyright: ignore[reportArgumentType]

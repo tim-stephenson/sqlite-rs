@@ -59,6 +59,25 @@ def test_query_via_rust_reports_sql_errors() -> None:
         _ = sqlite_rs.query_via_rust(conn, "SELECT * FROM nonexistent")
 
 
+def test_query_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
+    # The c_void_p from get_raw_db_ptr goes straight back in, without .value.
+    conn = sqlite_rs.sqlite3.connect(":memory:")
+    _ = conn.execute("CREATE TABLE t (a INTEGER)")
+    _ = conn.execute("INSERT INTO t VALUES (9)")
+
+    ptr = sqlite_rs.get_raw_db_ptr(conn)
+    assert ptr.value is not None  # c_void_p.value is int | None
+
+    assert sqlite_rs.query_via_raw_pointer(ptr, "SELECT a FROM t") == [[9]]
+    assert sqlite_rs.query_via_raw_pointer(ptr.value, "SELECT a FROM t") == [[9]]
+
+
+def test_query_via_raw_pointer_rejects_null() -> None:
+    for null in (0, ctypes.c_void_p(), ctypes.c_void_p(0)):
+        with pytest.raises(ValueError, match="db_ptr is null"):
+            _ = sqlite_rs.query_via_raw_pointer(null, "SELECT 1")
+
+
 @pytest.fixture
 def libsqlite3() -> ctypes.CDLL:
     """Load the bundled libsqlite3 (sqlite_rs.LIBSQLITE3_PATH) via ctypes."""
