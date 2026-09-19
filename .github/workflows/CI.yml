@@ -37,13 +37,13 @@ jobs:
       # JSON arrays, for `matrix: python-version: ${{ fromJSON(...) }}`.
       all: ${{ steps.versions.outputs.all }}
       tested: ${{ steps.versions.outputs.tested }}
+      tested_spaced: ${{ steps.versions.outputs.tested_spaced }}
       tested_windows: ${{ steps.versions.outputs.tested_windows }}
       # Newline-separated, for actions/setup-python's multi-version input.
       all_lines: ${{ steps.versions.outputs.all_lines }}
       # Space-separated, for maturin's `--interpreter`.
       all_spaced: ${{ steps.versions.outputs.all_spaced }}
       cpython_source_built_spaced: ${{ steps.versions.outputs.cpython_source_built_spaced }}
-      musllinux_1_1_inherited_spaced: ${{ steps.versions.outputs.musllinux_1_1_inherited_spaced }}
     steps:
       - id: versions
         shell: bash
@@ -138,17 +138,14 @@ jobs:
           #          matrix was built to avoid.
           emit cpython_source_built 3.15 3.15t
 
-          #   2. musl x86_64/i686/aarch64 copy /opt/python straight out of
-          #      quay.io/pypa/musllinux_1_1_<arch> -- an image PyPA declared
-          #      end-of-life on 2024-11-01, whose final build was published
-          #      2024-10-26. CPython 3.14 did not exist yet on that date, so
-          #      those images are frozen at 3.13 and always will be. (musl
-          #      armv7 is unaffected: it falls under case 1 above and does get
-          #      3.14.) Fixing this properly is upstream's call -- rust-cross
-          #      would need to copy from musllinux_1_2 -- or it needs the
-          #      native PyPA musllinux_1_2 image under QEMU, which is the
-          #      slowness this matrix was reworked to avoid.
-          emit musllinux_1_1_inherited 3.14 3.15 3.15t
+          #   2. (Formerly: musl x86_64/i686/aarch64 copied /opt/python out
+          #      of quay.io/pypa/musllinux_1_1_<arch>, which PyPA retired on
+          #      2024-11-01 with a final build on 2024-10-26 -- before CPython
+          #      3.14 existed -- so they were frozen at 3.13. Those targets no
+          #      longer use rust-cross at all: a musl container on a glibc
+          #      host is the same CPU, so the native, actively-maintained PyPA
+          #      musllinux_1_2 images run without emulation. Only musl armv7,
+          #      which has no native runner, still falls under case 1.)
 
           # Everything sqlite-rs builds is now also testable: the package has
           # no runtime dependencies at all, so a wheel plus the `test` group
@@ -358,61 +355,51 @@ jobs:
           name: wheels-linux-aarch64
           path: dist
 
+  # musl x86_64 and i686 need no cross-compilation at all: a musl container
+  # on a glibc host is the same CPU, just a different libc, so Docker runs it
+  # natively. That means these use the real, actively-maintained PyPA
+  # musllinux_1_2 images (republished 2026-09-14) rather than
+  # ghcr.io/rust-cross/musllinux_1_2-cross, which despite its name copies
+  # /opt/python out of the musllinux_1_1 images PyPA retired on 2024-11-01
+  # and so is permanently frozen at CPython 3.13.
+  #
+  # armv7 is the one musl target with no native runner, so it keeps the
+  # -cross image and the CPython-from-source cap that comes with it -- see
+  # the config job's cpython_source_built output.
+  #
+  # This mirrors how the glibc side is already split: native PyPA images
+  # wherever a runner of the right architecture exists, *-cross only for
+  # the targets where one doesn't.
   musllinux:
-    runs-on: ${{ matrix.platform.runner }}
+    runs-on: ubuntu-22.04
     needs: config
     strategy:
       fail-fast: false
       matrix:
         platform:
-          # x86_64/i686/aarch64 inherit /opt/python from the EOL
-          # musllinux_1_1 images and so stop at 3.13; armv7 has its CPythons
-          # compiled from source by rust-cross instead and reaches 3.14. See
-          # the config job for both mechanisms.
-          - runner: ubuntu-22.04
-            target: x86_64
-            cross_arch: x86_64
-            interpreter: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
-          - runner: ubuntu-22.04
-            target: x86
-            cross_arch: i686
-            interpreter: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
-          - runner: ubuntu-22.04
-            target: aarch64
-            cross_arch: aarch64
-            interpreter: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
-          - runner: ubuntu-22.04
-            target: armv7
-            cross_arch: armv7
+          - target: x86_64
+            interpreter: ${{ needs.config.outputs.all_spaced }}
+          - target: x86
+            interpreter: ${{ needs.config.outputs.all_spaced }}
+          - target: armv7
+            container: ghcr.io/rust-cross/musllinux_1_2-cross:armv7
             interpreter: ${{ needs.config.outputs.cpython_source_built_spaced }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
-      # ghcr.io/rust-cross/musllinux_1_2-cross is a fast, natively-running (x86_64
-      # host, cross-gcc bolted on, no QEMU) image dedicated to musl wheel building
-      # -- distinct from maturin-action's older default `rust-musl-cross` image,
-      # which is a general-purpose Rust musl cross-compiling image with no Python
-      # at all. This one bundles real target-arch CPython installs under
-      # /opt/python, same as the manylinux-cross family; build.rs's cross-Python
-      # lookup (find_cross_python_executable / resolve_python) derives the
-      # target's Python.h/pyconfig.h include dir and EXT_SUFFIX from that
-      # directory layout instead of executing the (possibly foreign-architecture)
-      # interpreter, so no target Python needs to actually run.
-      #
-      # Explicit `--interpreter` list instead of --find-interpreter: these
-      # images' interpreter sets are capped (differently per target, see the
-      # matrix above), but --find-interpreter doesn't actually verify what's
-      # present in *-cross images before attempting a build, so it always
-      # tries (and fails on) the versions that aren't there.
+      - uses: astral-sh/setup-uv@v7
+      # Explicit `--interpreter` list instead of --find-interpreter: on the
+      # armv7 -cross image, --find-interpreter doesn't verify what's actually
+      # present before attempting a build, so it always tries (and fails on)
+      # versions that aren't there. The native legs pass the full canonical
+      # list, which their image really does carry.
       #
       # --auditwheel=warn: see the matching comment in the linux job -- same
       # risk of maturin relocating libsqlite3 into a private copy for _core
       # alone, leaving the clone module/LIBSQLITE3_PATH pointing at a
-      # different, stale one. Not yet confirmed to manifest here (musllinux
-      # wheels aren't tested in this job), but the underlying mechanism is
-      # identical whenever `manylinux:`/`musllinux_1_2` triggers auto-repair.
+      # different, stale one.
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
@@ -422,16 +409,46 @@ jobs:
             --interpreter ${{ matrix.platform.interpreter }}
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: musllinux_1_2
-          container: ghcr.io/rust-cross/musllinux_1_2-cross:${{ matrix.platform.cross_arch }}
+          container: ${{ matrix.platform.container }}
       # Not tested inline: these wheels are tagged musllinux_1_2_* for musl
       # libc (Alpine) systems, but this runner is a standard glibc Ubuntu
       # host -- pip would refuse to install them at all (incompatible
-      # platform tag), regardless of matching CPU architecture. x86_64 and
-      # aarch64 are tested in the dedicated musl container jobs below.
+      # platform tag), regardless of matching CPU architecture. x86_64 is
+      # tested in its own musl container job below.
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
           name: wheels-musllinux-${{ matrix.platform.target }}
+          path: dist
+
+  # Split out of the musllinux job for the same reason linux-aarch64 is split
+  # out of linux: ubuntu-24.04-arm is a genuine ARM64 runner, so the native
+  # PyPA musllinux_1_2_aarch64 image runs without QEMU or cross-gcc, and
+  # carries the full CPython set.
+  musllinux-aarch64:
+    runs-on: ubuntu-24.04-arm
+    needs: config
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - uses: astral-sh/setup-uv@v7
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64
+          args: >-
+            --release --out dist --auditwheel=warn
+            --interpreter ${{ needs.config.outputs.all_spaced }}
+          sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          manylinux: musllinux_1_2
+      # Tested in test-musllinux-aarch64 below, not inline: this runner is a
+      # glibc host, so pip would reject the musllinux platform tag here.
+      - name: Upload wheels
+        uses: actions/upload-artifact@v6
+        with:
+          name: wheels-musllinux-aarch64
           path: dist
 
   windows:
@@ -776,14 +793,14 @@ jobs:
           path: dist
       - name: Run tests in musllinux_1_2 container
         env:
-          VERSIONS: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
+          VERSIONS: ${{ needs.config.outputs.tested_spaced }}
         run: |
           set -euo pipefail
           docker run --rm -e VERSIONS -v "$PWD:/io" -w /io \
             quay.io/pypa/musllinux_1_2_x86_64 /io/.github/musl-test.sh
 
   test-musllinux-aarch64:
-    needs: [config, musllinux]
+    needs: [config, musllinux-aarch64]
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v6
@@ -793,7 +810,7 @@ jobs:
           path: dist
       - name: Run tests in musllinux_1_2 container
         env:
-          VERSIONS: ${{ needs.config.outputs.musllinux_1_1_inherited_spaced }}
+          VERSIONS: ${{ needs.config.outputs.tested_spaced }}
         run: |
           set -euo pipefail
           docker run --rm -e VERSIONS -v "$PWD:/io" -w /io \
@@ -818,7 +835,7 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, linux-aarch64, musllinux, windows, macos, sdist]
+    needs: [linux, linux-aarch64, musllinux, musllinux-aarch64, windows, macos, sdist]
     permissions:
       # Use to sign the release artifacts
       id-token: write
