@@ -3,6 +3,13 @@ name = "sqlite-rs"
 version = "0.1.0"
 edition = "2024"
 license = "MIT"
+# Not published to crates.io -- this crate only ever gets compiled into the
+# _core extension module and shipped inside a Python wheel. These are here
+# because maturin builds the sdist by shelling out to `cargo package --list`,
+# and Cargo warns on every such run when a manifest carries none of
+# description/documentation/homepage/repository.
+description = "A Rust reimplementation of SQLite, validated in-process against the real thing."
+repository = "https://github.com/tim-stephenson/sqlite-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [lib]

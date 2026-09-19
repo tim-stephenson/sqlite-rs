@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "sqlite-rs"
-description = ""
+description = "A Rust reimplementation of SQLite, validated in-process against the real thing."
 authors = [
     { name = "Timothy Stephenson", email = "38039215+tim-stephenson@users.noreply.github.com" }
 ]
@@ -21,6 +21,11 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/tim-stephenson/sqlite-rs"
+Repository = "https://github.com/tim-stephenson/sqlite-rs"
+Issues = "https://github.com/tim-stephenson/sqlite-rs/issues"
 
 
 [dependency-groups]
