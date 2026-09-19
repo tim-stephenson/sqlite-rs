@@ -122,8 +122,16 @@ jobs:
           #          and are actively rebuilt -- manylinux_2_31_armv7l,
           #          manylinux_2_35_armv7l and musllinux_1_2_armv7l were all
           #          republished 2026-09-14 and carry the full CPython set.
-          #          The gap is only that *manylinux_2_28*_armv7l does not
-          #          exist, and armv7 sits in rust-cross's 2_28 group.
+          #          The gap is purely one of tags: PyPA ships armv7l only
+          #          on Debian-derivative bases (manylinux_2_31 is Ubuntu
+          #          20.04, manylinux_2_35 is Ubuntu 22.04), because the
+          #          RHEL-family bases behind manylinux2014/_2_28/_2_34/
+          #          _2_39 have no armv7 build at all. So manylinux_2_28_
+          #          armv7l does not and will not exist -- and armv7 sits in
+          #          rust-cross's 2_28 group, where there is nothing to copy
+          #          from. Moving it to their 2_31 or 2_35 group would fix
+          #          it; note those tags mean a glibc 2.31/2.35 floor for
+          #          armv7 specifically, above this project's 2.28.
           #      (c) Failing both, this workflow could point armv7 at the
           #          native PyPA manylinux_2_31_armv7l image and run it
           #          under QEMU -- correct, but the emulation slowness this
