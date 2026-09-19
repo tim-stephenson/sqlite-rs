@@ -106,6 +106,28 @@ jobs:
           #      from source in the Dockerfile. That list is pinned at
           #      3.9.25/3.10.20/3.11.15/3.12.13/3.13.14/3.14.6, with no
           #      free-threaded build of any version. So: no 3.15, no 3.15t.
+          #
+          #      What would have to change for armv7 to get 3.15/3.15t --
+          #      we can't fix any of this from here, and armv7 stays capped
+          #      at 3.14 until one of them happens:
+          #
+          #      (a) rust-cross adds 3.15 to the source-build blocks in its
+          #          Dockerfile.j2, plus a second --disable-gil configure
+          #          pass installed as /opt/python/cp315-cp315t for 3.15t.
+          #          Today the file has one hardcoded block per version and
+          #          stops at 3.14.6.
+          #      (b) Better: rust-cross stops source-building armv7 at all
+          #          and COPYs /opt/python from PyPA instead, the way it
+          #          already does for ppc64le and riscv64. The images exist
+          #          and are actively rebuilt -- manylinux_2_31_armv7l,
+          #          manylinux_2_35_armv7l and musllinux_1_2_armv7l were all
+          #          republished 2026-09-14 and carry the full CPython set.
+          #          The gap is only that *manylinux_2_28*_armv7l does not
+          #          exist, and armv7 sits in rust-cross's 2_28 group.
+          #      (c) Failing both, this workflow could point armv7 at the
+          #          native PyPA manylinux_2_31_armv7l image and run it
+          #          under QEMU -- correct, but the emulation slowness this
+          #          matrix was built to avoid.
           emit cpython_source_built 3.15 3.15t
 
           #   2. musl x86_64/i686/aarch64 copy /opt/python straight out of
