@@ -1,5 +1,27 @@
 # sqlite-rs
 
+A drop-in superset of Python's `sqlite3` bindings, extended with Rust.
+
+
+## Development
+
+Needs a Rust toolchain and [uv](https://docs.astral.sh/uv/).
+
+| | |
+| --- | --- |
+| build | `uv run maturin develop --uv` |
+| test | `uv run pytest tests/` |
+| lint | `uv run ruff check . && uv run ruff format --check .` |
+| types | `uv run basedpyright . --warnings` |
+
+`maturin develop` is the whole build: `build.rs` compiles the vendored SQLite
+and CPython `_sqlite` sources, materializes `python/sqlite_rs/sqlite3/` from
+`vendor/`, then builds `_core`. Every `uv run` re-syncs the project first, so
+add `--no-sync` to skip the rebuild once it is current.
+
+`bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
+resolve the vendored CPython headers in `native/`.
+
 
 ## TODO
 
