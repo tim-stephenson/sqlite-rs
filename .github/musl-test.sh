@@ -28,9 +28,9 @@ for v in $VERSIONS; do
     # --no-index: the wheel under test must come from dist/, never PyPI.
     # sqlite-rs has no runtime dependencies, so nothing else needs resolving.
     "$py" -m pip install --quiet --no-index --find-links dist sqlite-rs
-    # pytest directly rather than the `test` dependency group: the group's
-    # only other member is pywin32, which is win32-only, and these images
-    # have no uv to resolve dependency-groups with.
+    # pytest directly rather than the `test` dependency group: pytest is now
+    # the group's only member, and these images have no uv to resolve
+    # dependency-groups with anyway.
     "$py" -m pip install --quiet pytest
     "$py" -m pytest tests/ -q || status=1
     echo "::endgroup::"

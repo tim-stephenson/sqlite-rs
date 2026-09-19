@@ -50,7 +50,6 @@ jobs:
       all: ${{ steps.versions.outputs.all }}
       tested: ${{ steps.versions.outputs.tested }}
       tested_spaced: ${{ steps.versions.outputs.tested_spaced }}
-      tested_windows: ${{ steps.versions.outputs.tested_windows }}
       # Space-separated, for maturin's `--interpreter`.
       all_spaced: ${{ steps.versions.outputs.all_spaced }}
       all_i_args: ${{ steps.versions.outputs.all_i_args }}
@@ -149,13 +148,6 @@ jobs:
           emit cpython_source_built 3.15 3.15t
 
           emit tested
-
-          # Windows is the one exception: the test group's pywin32 -- needed
-          # only on win32 -- has no free-threaded wheel for any CPython
-          # version yet (confirmed in CI: "no wheels ... with Python ABI
-          # tags: cp39, cp310, cp311, cp312, cp313, cp314, cp315" -- no
-          # cp314t/cp315t), so 3.15t builds on Windows but isn't tested there.
-          emit tested_windows 3.15t
 
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
@@ -718,9 +710,6 @@ jobs:
   # doesn't force a matrix dimension onto the build step itself, which
   # already builds every version in one maturin invocation.
   #
-  # See the config job for why `tested` drops 3.15/3.15t, and why
-  # `tested_windows` is kept as a separate output even though it currently
-  # resolves to the same list.
   test-linux-x86_64:
     needs: [config, linux]
     runs-on: ubuntu-22.04
@@ -831,7 +820,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ${{ fromJSON(needs.config.outputs.tested_windows) }}
+        python-version: ${{ fromJSON(needs.config.outputs.tested) }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/download-artifact@v7

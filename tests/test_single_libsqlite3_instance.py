@@ -23,6 +23,7 @@ import ctypes
 import re
 import sys
 from pathlib import Path
+from typing import cast
 
 import sqlite_rs
 import sqlite_rs.sqlite3
@@ -42,6 +43,78 @@ _BUNDLED_NAME_PATTERN = re.compile(
 
 # /proc/self/maps lines: address perms offset dev inode [pathname].
 _PROC_MAPS_FIELD_COUNT = 6
+
+
+def _windows_module_paths() -> set[Path]:
+    """Every module mapped into this process, via kernel32/psapi.
+
+    Split out of :func:`_loaded_library_paths` only to keep that function
+    under ruff's complexity limit.
+    """
+    # Straight ctypes against kernel32/psapi rather than pywin32, for the
+    # same reason the darwin branch above calls dyld directly: it keeps
+    # this suite's only third-party requirement pytest. pywin32 has never
+    # published a free-threaded wheel for any CPython version, so depending
+    # on it here meant Windows could not be tested on 3.13t/3.14t/3.15t at
+    # all -- a third-party package gating which interpreters this project
+    # can verify itself against.
+    #
+    # Every attribute looked up on a WinDLL is typed Any -- ctypes resolves
+    # foreign functions at runtime and cannot describe their signatures
+    # statically -- so each value crossing this boundary is annotated or cast
+    # at the point it enters Python, rather than blanket-silencing reportAny.
+    from ctypes import wintypes  # noqa: PLC0415
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    psapi.EnumProcessModulesEx.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(wintypes.HMODULE),
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        wintypes.DWORD,
+    ]
+    psapi.EnumProcessModulesEx.restype = wintypes.BOOL
+    psapi.GetModuleFileNameExW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.HMODULE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+    ]
+    psapi.GetModuleFileNameExW.restype = wintypes.DWORD
+
+    list_modules_all = 0x03
+    hproc = cast("int", kernel32.GetCurrentProcess())
+
+    # EnumProcessModulesEx reports the bytes it *wanted* via `needed`, so
+    # a buffer that was too small is retried at the size it asked for
+    # rather than silently truncating the module list.
+    needed = wintypes.DWORD()
+    capacity = 1024
+    while True:
+        mods = (wintypes.HMODULE * capacity)()
+        if not psapi.EnumProcessModulesEx(
+            hproc, mods, ctypes.sizeof(mods), ctypes.byref(needed), list_modules_all
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if needed.value <= ctypes.sizeof(mods):
+            break
+        capacity = needed.value // ctypes.sizeof(wintypes.HMODULE)
+
+    # MAX_PATH is not a real ceiling for module paths on modern Windows;
+    # size for the 32767-wide-char limit instead of truncating long ones.
+    buf = ctypes.create_unicode_buffer(32768)
+    handles = cast(
+        "list[int]", list(mods[: needed.value // ctypes.sizeof(wintypes.HMODULE)])
+    )
+    paths: set[Path] = set()
+    for hmod in handles:
+        if psapi.GetModuleFileNameExW(hproc, hmod, buf, len(buf)):
+            paths.add(Path(cast("str", buf.value)).resolve())
+    return paths
 
 
 def _loaded_library_paths() -> set[Path]:
@@ -73,24 +146,7 @@ def _loaded_library_paths() -> set[Path]:
         }
 
     if sys.platform == "win32":
-        # pywin32 has bundled typeshed stubs (hence reportMissingModuleSource,
-        # not reportMissingImports) but isn't installed as a real package when
-        # type-checking from a non-Windows machine, so its own return types
-        # are Unknown/Any here regardless of the platform this actually runs
-        # on.
-        import win32api  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
-        import win32process  # noqa: PLC0415  # pyright: ignore[reportMissingModuleSource]
-
-        hproc = win32api.GetCurrentProcess()
-        hmods = win32process.EnumProcessModulesEx(  # pyright: ignore[reportUnknownMemberType]
-            hproc, win32process.LIST_MODULES_ALL
-        )
-        return {
-            Path(
-                win32process.GetModuleFileNameEx(hproc, hmod)  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType, reportAny]
-            ).resolve()
-            for hmod in hmods  # pyright: ignore[reportAny]
-        }
+        return _windows_module_paths()
 
     msg = f"unsupported platform: {sys.platform}"
     raise NotImplementedError(msg)
