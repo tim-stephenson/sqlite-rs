@@ -74,7 +74,27 @@ impl ColumnBuilder {
         }
     }
 
+    /// Append `cell` to the column, widening the column first if it has to.
+    ///
+    /// The type-stable case -- a value of exactly the type the column is
+    /// already holding -- is the one this module is built around, so it is a
+    /// short match this inlines into the caller's row loop. Everything else
+    /// goes out of line.
+    #[inline]
     pub fn push(&mut self, cell: Cell<'_>) {
+        match (&mut *self, cell) {
+            (ColumnBuilder::Int(b), Cell::Int(v)) => b.append_value(v),
+            (ColumnBuilder::Real(b), Cell::Real(v)) => b.append_value(v),
+            (ColumnBuilder::Text(b), Cell::Text(v)) => b.append_value(v),
+            (ColumnBuilder::Blob(b), Cell::Blob(v)) => b.append_value(v),
+            _ => self.push_widening(cell),
+        }
+    }
+
+    /// A NULL, a value narrower than the column, or one wide enough to
+    /// promote it.
+    #[inline(never)]
+    fn push_widening(&mut self, cell: Cell<'_>) {
         if cell.rank() > self.rank() {
             self.promote_to(cell.rank());
         }
