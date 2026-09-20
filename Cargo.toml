@@ -2,6 +2,11 @@
 name = "sqlite-rs"
 version = "0.1.0"
 edition = "2024"
+# Older toolchains write a Mach-O whose string table follows the indirect
+# symbol table unpadded, which macOS 27's dyld rejects outright whenever the
+# symbol count is odd ("mis-aligned LINKEDIT string pool"). Half of all builds,
+# by chance. Fixed in 1.98 (rust-lang/rust#157750).
+rust-version = "1.98"
 license = "MIT"
 # Not published to crates.io -- this crate only ever gets compiled into the
 # _core extension module and shipped inside a Python wheel. These are here

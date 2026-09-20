@@ -633,17 +633,7 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
     }
     println!("cargo:rustc-link-lib=dylib={}", link_lib_name());
     match target_os().as_str() {
-        "macos" => {
-            println!("cargo:rustc-cdylib-link-arg=-Wl,-rpath,@loader_path");
-            // `-undefined dynamic_lookup`, which pyo3's extension-module
-            // feature requires, makes ld fall back to the classic LINKEDIT
-            // layout. Its indirect symbol table is not padded, so an odd
-            // symbol count leaves the string pool 4-byte aligned and dyld
-            // rejects the image: "mis-aligned LINKEDIT string pool". Which
-            // side of that a link lands on is chance. Chained fixups have no
-            // such table; they need macOS 12, pinned in .cargo/config.toml.
-            println!("cargo:rustc-cdylib-link-arg=-Wl,-fixup_chains");
-        }
+        "macos" => println!("cargo:rustc-cdylib-link-arg=-Wl,-rpath,@loader_path"),
         // Windows' default DLL search order already checks the directory of
         // the loading module (_core.pyd) first, where libsqlite3's renamed
         // sqlite3.dll also lives (see Python/dynload_win.c's

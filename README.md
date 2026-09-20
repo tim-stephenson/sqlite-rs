@@ -122,7 +122,8 @@ adopts the buffers as they are.
 
 ## Development
 
-Needs a Rust toolchain and [uv](https://docs.astral.sh/uv/).
+Needs Rust 1.98 or newer (see `rust-version` in Cargo.toml for why) and
+[uv](https://docs.astral.sh/uv/).
 
 | | |
 | --- | --- |
