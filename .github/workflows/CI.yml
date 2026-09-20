@@ -393,6 +393,23 @@ jobs:
 
   # `docker run` from a step, not the job-level `container:` key: that injects
   # a glibc-linked Node to run every `uses:` step, which cannot execute on musl.
+  # 32-bit interpreters, which the 64-bit runner has none of; the image does.
+  test-linux-i686:
+    needs: [config, linux]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-linux-x86
+          path: dist
+      - env:
+          VERSIONS: ${{ needs.config.outputs.tested_spaced }}
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/386 -e VERSIONS -v "$PWD:/io" -w /io \
+            quay.io/pypa/manylinux_2_28_i686 /io/.github/wheel-test.sh
+
   test-musllinux-x86_64:
     needs: [config, musllinux]
     runs-on: ubuntu-22.04
@@ -407,7 +424,55 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm -e VERSIONS -v "$PWD:/io" -w /io \
-            quay.io/pypa/musllinux_1_2_x86_64 /io/.github/musl-test.sh
+            quay.io/pypa/musllinux_1_2_x86_64 /io/.github/wheel-test.sh
+
+  test-windows-x86:
+    needs: [config, windows]
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(needs.config.outputs.tested) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-windows-x86
+          path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x86
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
+      - run: |
+          uv pip install --system --find-links dist sqlite-rs
+          uv pip install --system --group test
+          pytest tests/
+
+  test-windows-arm64:
+    needs: [config, windows]
+    runs-on: windows-11-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ${{ fromJSON(needs.config.outputs.tested) }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v7
+        with:
+          name: wheels-windows-aarch64
+          path: dist
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: arm64
+          allow-prereleases: true
+      - uses: astral-sh/setup-uv@v7
+      - run: |
+          uv pip install --system --find-links dist sqlite-rs
+          uv pip install --system --group test
+          pytest tests/
 
   test-musllinux-aarch64:
     needs: [config, musllinux-aarch64]
@@ -423,7 +488,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm -e VERSIONS -v "$PWD:/io" -w /io \
-            quay.io/pypa/musllinux_1_2_aarch64 /io/.github/musl-test.sh
+            quay.io/pypa/musllinux_1_2_aarch64 /io/.github/wheel-test.sh
 
   sdist:
     runs-on: ubuntu-latest
@@ -458,6 +523,9 @@ jobs:
       - test-windows-x64
       - test-musllinux-x86_64
       - test-musllinux-aarch64
+      - test-linux-i686
+      - test-windows-x86
+      - test-windows-arm64
     permissions:
       id-token: write
       contents: write

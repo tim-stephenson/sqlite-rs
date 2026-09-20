@@ -1,8 +1,8 @@
 #!/bin/sh
-# Run the test suite against the freshly built musllinux wheel, once per
-# Python version, inside a PyPA musllinux_1_2 image. Invoked by the
-# test-musllinux-* jobs in workflows/CI.yml, which pass $VERSIONS (the
-# config job's musllinux_1_1_inherited list, e.g. "3.11 3.12 3.13").
+# Run the test suite against a freshly built wheel, once per Python version,
+# inside a PyPA image. Invoked by the test jobs in workflows/CI.yml that cannot
+# use setup-python -- musllinux, where the runner's glibc Node cannot execute,
+# and i686, where the runner is 64-bit -- which pass $VERSIONS.
 #
 # The interpreters live at /opt/python/<python tag>-<abi tag>/bin/python, the
 # PEP 425 tag pair -- so 3.11 is cp311-cp311 but free-threaded 3.15t is
