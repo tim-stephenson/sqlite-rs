@@ -48,12 +48,60 @@ NULL never promotes anything, it only contributes a null slot; a column of
 nothing but NULLs stays Arrow `null`. Promotion is one-way, so a column is
 rebuilt at most four times however many rows it has.
 
-`execute_and_fetch_all_via_raw_pointer` and `fetch_all_via_raw_pointer` are the
-mirror image: they take a pointer an unrelated FFI caller already holds, so the
-sharing works in both directions.
-
 Supported on CPython 3.11-3.15, including free-threaded 3.15t, for Linux
 (glibc and musl), macOS and Windows.
+
+
+## API
+
+Everything here acts on a live connection or statement from
+`sqlite_rs.sqlite3`, never the stdlib `sqlite3`: the extension finds the
+`sqlite3*` and `sqlite3_stmt*` inside those objects by reading CPython's
+private struct layout, which is only guaranteed to match for objects this
+package's own clone module built. A stdlib object raises `TypeError`.
+
+| | |
+| --- | --- |
+| `execute_and_fetch_all(connection, sql)` | run one statement, return its columns |
+| `fetch_all(cursor)` | drain a cursor's statement, return its columns |
+| `get_raw_db_ptr(connection)` | the `sqlite3*`, as a `ctypes.c_void_p` |
+| `get_raw_stmt_ptr(cursor)` | the `sqlite3_stmt*`, as a `ctypes.c_void_p` |
+| `execute_and_fetch_all_via_raw_pointer(db_ptr, sql)` | the same, from a pointer |
+| `fetch_all_via_raw_pointer(stmt_ptr)` | the same, from a pointer |
+| `LIBSQLITE3_PATH` | the bundled library, for `ctypes.CDLL` |
+| `DEBUG_BUILD` | whether the extension was built without optimization |
+
+Both fetch functions return one array per result column, and `[]` for a
+statement with no result columns, such as an `INSERT`. `sql` must hold a
+single statement: a second one raises `ValueError` rather than being silently
+dropped, and a SQL error is a `ValueError` carrying SQLite's own message.
+
+`fetch_all` steps the very statement its cursor iterates, so the two share
+position -- rows it returns are rows the cursor will no longer yield. It
+leaves the cursor exhausted but usable; `execute()` it again to reuse it.
+
+The two `_via_raw_pointer` functions are the mirror image: they take a pointer
+an unrelated FFI caller already holds, so the sharing works in both
+directions. There is no object to check, so the pointer is trusted as given.
+
+`help()` on any of these has the rest.
+
+### Handing the columns on
+
+Each array carries its column name in the schema it exports, so a consumer
+that reads the schema needs nothing else:
+
+```python
+import polars as pl
+
+columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT a, b AS renamed FROM t")
+frame = pl.DataFrame([pl.Series(c) for c in columns])
+frame.columns  # ['a', 'renamed']
+```
+
+Per column rather than all at once, because an Arrow *array* has no name --
+only the field describing it does -- so `pl.DataFrame(columns)` would see one
+unnamed thing rather than two named ones.
 
 
 ## Development
@@ -76,8 +124,8 @@ add `--no-sync` to skip the rebuild once it is current.
 fetching a large table into polars against stdlib `sqlite3`'s `fetchall()`. It
 needs `maturin develop --release`; `sqlite_rs.DEBUG_BUILD` says which you have.
 `fetchall()` is where stdlib stops -- it is not charged for arranging its rows
-into anything. On one machine, 10M rows of a four-column STRICT table: 1.08s
-and 0.69 GB against 4.41s and 2.06 GB.
+into anything. On one machine, 10M rows of a four-column STRICT table: 0.97s
+and 0.69 GB against 4.30s and 2.26 GB.
 
 `bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
 resolve the vendored CPython headers in `native/`.
