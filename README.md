@@ -2,6 +2,37 @@
 
 A drop-in superset of Python's `sqlite3` bindings, extended with Rust.
 
+`sqlite_rs.sqlite3` is a from-scratch build of CPython's own `sqlite3` module,
+used exactly like it. On top of that, `sqlite_rs` adds Rust functions that act
+on the *same* live connection: the clone module, the Rust extension and raw
+`ctypes` all dynamically link one bundled SQLite, so a `sqlite3*` or
+`sqlite3_stmt*` can be handed between them rather than reopened.
+
+```python
+import sqlite_rs
+import sqlite_rs.sqlite3
+
+conn = sqlite_rs.sqlite3.connect(":memory:")      # exactly like stdlib sqlite3
+conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
+
+sqlite_rs.execute_and_fetch_all(conn, "INSERT INTO t VALUES (1, 'x')")
+sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")   # [[1, 'x']]
+
+cur = conn.execute("SELECT * FROM t")
+sqlite_rs.get_raw_stmt_ptr(cur)     # ctypes.c_void_p -> sqlite3_stmt*
+sqlite_rs.fetch_all(cur)            # [[1, 'x']] -- and leaves cur exhausted
+
+sqlite_rs.get_raw_db_ptr(conn)      # ctypes.c_void_p -> sqlite3*
+sqlite_rs.LIBSQLITE3_PATH           # the bundled library, for ctypes.CDLL
+```
+
+`execute_and_fetch_all_via_raw_pointer` and `fetch_all_via_raw_pointer` are the
+mirror image: they take a pointer an unrelated FFI caller already holds, so the
+sharing works in both directions.
+
+Supported on CPython 3.11-3.15, including free-threaded 3.15t, for Linux
+(glibc and musl), macOS and Windows.
+
 
 ## Development
 
@@ -22,20 +53,25 @@ add `--no-sync` to skip the rebuild once it is current.
 `bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
 resolve the vendored CPython headers in `native/`.
 
+The bundled SQLite is deliberately named `libsqlite_rs_sqlite3`, not
+`libsqlite3`: musl and Windows resolve a dependency by matching an
+already-loaded module's bare filename, so an unprefixed name silently binds to
+CPython's own SQLite instead. `.cargo/config.toml` exists to force that name
+past libsqlite3-sys, which hardcodes `sqlite3`.
+
 
 ## TODO
 
 
 ### high
 
-- Use `rusqlite` which uses the vendored C `sqlite` library
+- Add CI for building docs
 
 ### nice to have
 
-- Add CI for building docs
 - Use `pyo3-stub-gen`
-
 - Expand pytest tests to parametrize over the three ways to interact with `sqlite` (`ctypes` on the C library, `sqlite_rs.sqlite3`, or rust functions in `sqlite_rs._core`)
 - Clean up the scripts which vendor `sqlite`, the cpython `sqlite` wrapper, the `basedpyright` cpython `sqlite` type stubs
 - Look for improvements in the reliability of the method used to extract the sqlite connection from the python sqlite connection in `native/`
-- Extract the sqite cursor from the python sqlite cursor
+- Add test jobs for the targets that build but are untested: linux i686, win32, win_arm64
+- Gate the release job on the test jobs; it currently only needs the build jobs
