@@ -31,9 +31,9 @@ conn = sqlite_rs.sqlite3.connect("example.db")  # exactly like stdlib sqlite3
 conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
 conn.execute("INSERT INTO t VALUES (1, 'x')")
 
-# One Arrow column per result column, named, and copied into polars nowhere.
-columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")
-pl.DataFrame([pl.Series(c) for c in columns])
+# Every result column, named, and copied into polars nowhere.
+table = sqlite_rs.execute_and_fetch_table(conn, "SELECT * FROM t")
+pl.DataFrame(table)
 ```
 
 Supported on CPython 3.11-3.15, including free-threaded 3.15t, for Linux
