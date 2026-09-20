@@ -7,9 +7,11 @@ on:
       rows:
         description: Rows in the fixture
         default: "10000000"
-      python-version:
-        description: Interpreter to build and run against
-        default: "3.14"
+
+# One interpreter: the numbers are about the fetch path, which does not vary
+# by version, and building the fixture for each would be minutes apiece.
+env:
+  PYTHON_VERSION: "3.14"
 
 jobs:
   benchmark:
@@ -23,7 +25,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v7
         with:
-          python-version: ${{ inputs.python-version }}
+          python-version: ${{ env.PYTHON_VERSION }}
       - run: uv sync --group bench
       - run: uv run maturin develop --uv --release
       - id: run
@@ -34,7 +36,7 @@ jobs:
       - shell: bash
         run: |
           {
-            echo "### ${{ matrix.runner }} -- ${{ runner.arch }}, Python ${{ inputs.python-version }}"
+            echo "### ${{ matrix.runner }} -- ${{ runner.arch }}, Python ${{ env.PYTHON_VERSION }}"
             echo '```'
             cat result.txt
             echo '```'
