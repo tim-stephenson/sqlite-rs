@@ -41,7 +41,7 @@ mod _core {
     /// the same `libsqlite3`), not just built from source-identical but
     /// independent copies.
     #[pyfunction]
-    fn query_via_rust(py: Python<'_>, connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+    fn execute_and_fetch_all(py: Python<'_>, connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
         run_query(py, connection_db(py, &connection)?, sql)
     }
 
@@ -49,7 +49,7 @@ mod _core {
     /// so it can be handed directly to an unrelated FFI caller -- e.g.
     /// ctypes calling straight into the bundled `libsqlite3` -- and used to
     /// operate on the exact same live connection sqlite_rs opened. Same
-    /// `connection` requirement as `query_via_rust` above.
+    /// `connection` requirement as `execute_and_fetch_all` above.
     #[pyfunction]
     fn get_raw_db_ptr(py: Python<'_>, connection: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         c_void_p(py, connection_db(py, &connection)? as usize)
@@ -64,7 +64,7 @@ mod _core {
     /// functions above, there's no type to check here -- an arbitrary raw
     /// pointer is trusted as-is, per its documented contract.
     #[pyfunction]
-    fn query_via_raw_pointer(py: Python<'_>, db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+    fn execute_and_fetch_all_via_raw_pointer(py: Python<'_>, db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
         run_query(py, raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)
     }
 
@@ -74,14 +74,14 @@ mod _core {
     /// cursor is a prepared statement -- so this is a `sqlite3_stmt*`, which
     /// is what an FFI caller passes to `sqlite3_step`, `sqlite3_column_*`
     /// and friends. `cursor` must come from `sqlite_rs.sqlite3`, for the
-    /// same struct-layout reason as `query_via_rust`.
+    /// same struct-layout reason as `execute_and_fetch_all`.
     #[pyfunction]
     fn get_raw_stmt_ptr(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         c_void_p(py, cursor_stmt(py, &cursor)? as usize)
     }
 
     /// Drain `cursor`'s underlying statement from the Rust side and return
-    /// the rows, decoding columns exactly as `query_via_rust` does.
+    /// the rows, decoding columns exactly as `execute_and_fetch_all` does.
     ///
     /// This steps the very same `sqlite3_stmt*` the Python cursor iterates,
     /// so the two share position: rows returned here are rows the cursor
@@ -100,7 +100,7 @@ mod _core {
 
     /// `fetch_all` against a raw `sqlite3_stmt*`, as returned by
     /// `get_raw_stmt_ptr` or by an unrelated FFI caller's own
-    /// `sqlite3_prepare_v2`. The mirror of `query_via_raw_pointer`: an
+    /// `sqlite3_prepare_v2`. The mirror of `execute_and_fetch_all_via_raw_pointer`: an
     /// arbitrary pointer is trusted as-is, per its documented contract.
     ///
     /// If the pointer came from a live Python cursor, that cursor must not be

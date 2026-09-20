@@ -10,7 +10,7 @@ without serializing/reopening:
   DB-API 2.0 wrapper (``sqlite3.dbapi2``) around a C extension
   (``sqlite3._sqlite3``). Use it exactly like the stdlib ``sqlite3`` module,
   e.g. ``sqlite_rs.sqlite3.connect(...)``.
-- ``sqlite_rs._core`` -- this project's Rust extension. :func:`query_via_rust`
+- ``sqlite_rs._core`` -- this project's Rust extension. :func:`execute_and_fetch_all`
   and :func:`get_raw_db_ptr` require a ``sqlite_rs.sqlite3.Connection``
   (not one from the stdlib ``sqlite3`` module); ``_core`` enforces that
   itself.
@@ -35,12 +35,12 @@ if sys.platform == "win32":
     _ = os.add_dll_directory(str(Path(__file__).parent))
 
 from sqlite_rs._core import (
+    execute_and_fetch_all,  # pyright: ignore[reportUnknownVariableType]
+    execute_and_fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     fetch_all,  # pyright: ignore[reportUnknownVariableType]
     fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     get_raw_db_ptr,  # pyright: ignore[reportUnknownVariableType]
     get_raw_stmt_ptr,  # pyright: ignore[reportUnknownVariableType]
-    query_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
-    query_via_rust,  # pyright: ignore[reportUnknownVariableType]
 )
 
 _LIBSQLITE3_NAMES = {
@@ -49,7 +49,7 @@ _LIBSQLITE3_NAMES = {
 }
 
 #: Path to the libsqlite3 dylib/so bundled alongside this package's native
-#: modules -- the one library ``sqlite3.connect``, :func:`query_via_rust`,
+#: modules -- the one library ``sqlite3.connect``, :func:`execute_and_fetch_all`,
 #: and :func:`get_raw_db_ptr` all dynamically link against. Mirrors the
 #: platform naming build.rs's shared_lib_name() uses to build it. Meant for
 #: handing to an unrelated FFI caller, e.g.
@@ -59,10 +59,10 @@ LIBSQLITE3_PATH = Path(__file__).parent / _LIBSQLITE3_NAME
 
 __all__ = [
     "LIBSQLITE3_PATH",
+    "execute_and_fetch_all",
+    "execute_and_fetch_all_via_raw_pointer",
     "fetch_all",
     "fetch_all_via_raw_pointer",
     "get_raw_db_ptr",
     "get_raw_stmt_ptr",
-    "query_via_raw_pointer",
-    "query_via_rust",
 ]

@@ -23,40 +23,42 @@ _EXEC_CALLBACK_T = ctypes.CFUNCTYPE(
 )
 
 
-def test_query_via_rust_reads_rows_written_via_the_clone_module() -> None:
+def test_execute_and_fetch_all_reads_rows_written_via_the_clone_module() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
     _ = conn.execute("CREATE TABLE t (a INTEGER, b TEXT, c REAL)")
     _ = conn.execute("INSERT INTO t VALUES (1, ?, 3.5)", ("hello",))
     conn.commit()
 
-    assert sqlite_rs.query_via_rust(conn, "SELECT * FROM t") == [[1, "hello", 3.5]]
+    assert sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t") == [
+        [1, "hello", 3.5]
+    ]
 
 
-def test_query_via_rust_writes_are_visible_via_the_clone_module() -> None:
+def test_execute_and_fetch_all_writes_are_visible_via_the_clone_module() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
     _ = conn.execute("CREATE TABLE t (a INTEGER)")
 
-    _ = sqlite_rs.query_via_rust(conn, "INSERT INTO t VALUES (42)")
+    _ = sqlite_rs.execute_and_fetch_all(conn, "INSERT INTO t VALUES (42)")
 
     assert conn.execute("SELECT * FROM t").fetchall() == [(42,)]
 
 
-def test_query_via_rust_rejects_stdlib_sqlite3_connection() -> None:
+def test_execute_and_fetch_all_rejects_stdlib_sqlite3_connection() -> None:
     stdlib_conn = sqlite3.connect(":memory:")
 
     with pytest.raises(TypeError, match=r"sqlite_rs\.sqlite3\.connect"):
         # Passing the wrong Connection type is exactly what's under test here.
-        _ = sqlite_rs.query_via_rust(
+        _ = sqlite_rs.execute_and_fetch_all(
             stdlib_conn,  # pyright: ignore[reportArgumentType]
             "SELECT 1",
         )
 
 
-def test_query_via_rust_reports_sql_errors() -> None:
+def test_execute_and_fetch_all_reports_sql_errors() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
 
     with pytest.raises(ValueError, match="no such table"):
-        _ = sqlite_rs.query_via_rust(conn, "SELECT * FROM nonexistent")
+        _ = sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM nonexistent")
 
 
 def test_rust_side_uses_the_same_sqlite_build_as_the_clone_module() -> None:
@@ -69,12 +71,12 @@ def test_rust_side_uses_the_same_sqlite_build_as_the_clone_module() -> None:
     """
     conn = sqlite_rs.sqlite3.connect(":memory:")
 
-    via_rust = sqlite_rs.query_via_rust(conn, "SELECT sqlite_version()")
+    via_rust = sqlite_rs.execute_and_fetch_all(conn, "SELECT sqlite_version()")
 
     assert via_rust == [[sqlite_rs.sqlite3.sqlite_version]]
 
 
-def test_query_via_rust_round_trips_a_blob() -> None:
+def test_execute_and_fetch_all_round_trips_a_blob() -> None:
     # rusqlite's ValueRef::Blob; the hand-written FFI this replaced returned
     # None for blob columns.
     conn = sqlite_rs.sqlite3.connect(":memory:")
@@ -82,10 +84,10 @@ def test_query_via_rust_round_trips_a_blob() -> None:
     blob = b"\x00\x01\xfe\xff"
     _ = conn.execute("INSERT INTO b VALUES (?)", (blob,))
 
-    assert sqlite_rs.query_via_rust(conn, "SELECT data FROM b") == [[blob]]
+    assert sqlite_rs.execute_and_fetch_all(conn, "SELECT data FROM b") == [[blob]]
 
 
-def test_query_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
+def test_execute_and_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
     # The c_void_p from get_raw_db_ptr goes straight back in, without .value.
     conn = sqlite_rs.sqlite3.connect(":memory:")
     _ = conn.execute("CREATE TABLE t (a INTEGER)")
@@ -94,14 +96,18 @@ def test_query_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
     ptr = sqlite_rs.get_raw_db_ptr(conn)
     assert ptr.value is not None  # c_void_p.value is int | None
 
-    assert sqlite_rs.query_via_raw_pointer(ptr, "SELECT a FROM t") == [[9]]
-    assert sqlite_rs.query_via_raw_pointer(ptr.value, "SELECT a FROM t") == [[9]]
+    assert sqlite_rs.execute_and_fetch_all_via_raw_pointer(ptr, "SELECT a FROM t") == [
+        [9]
+    ]
+    assert sqlite_rs.execute_and_fetch_all_via_raw_pointer(
+        ptr.value, "SELECT a FROM t"
+    ) == [[9]]
 
 
-def test_query_via_raw_pointer_rejects_null() -> None:
+def test_execute_and_fetch_all_via_raw_pointer_rejects_null() -> None:
     for null in (0, ctypes.c_void_p(), ctypes.c_void_p(0)):
         with pytest.raises(ValueError, match="db_ptr is null"):
-            _ = sqlite_rs.query_via_raw_pointer(null, "SELECT 1")
+            _ = sqlite_rs.execute_and_fetch_all_via_raw_pointer(null, "SELECT 1")
 
 
 @pytest.fixture
@@ -186,9 +192,9 @@ def test_connection_opened_via_ctypes_is_usable_via_the_sqlite_rs_api(
 ) -> None:
     """A connection ctypes opens directly can be driven from sqlite_rs's Rust side.
 
-    Proves the sharing isn't one-directional: `query_via_raw_pointer` doesn't
-    care that this connection was never touched by sqlite_rs's own Python
-    clone module.
+    Proves the sharing isn't one-directional:
+    `execute_and_fetch_all_via_raw_pointer` doesn't care that this connection
+    was never touched by sqlite_rs's own Python clone module.
     """
     db_path = tmp_path / "ctypes_then_rust.db"
     db = ctypes.c_void_p()
@@ -197,8 +203,12 @@ def test_connection_opened_via_ctypes_is_usable_via_the_sqlite_rs_api(
     db_ptr = db.value
     assert db_ptr is not None
 
-    _ = sqlite_rs.query_via_raw_pointer(db_ptr, "CREATE TABLE t (a INTEGER)")
-    _ = sqlite_rs.query_via_raw_pointer(db_ptr, "INSERT INTO t VALUES (7)")
+    _ = sqlite_rs.execute_and_fetch_all_via_raw_pointer(
+        db_ptr, "CREATE TABLE t (a INTEGER)"
+    )
+    _ = sqlite_rs.execute_and_fetch_all_via_raw_pointer(
+        db_ptr, "INSERT INTO t VALUES (7)"
+    )
 
     # Read back purely through ctypes on the SAME connection -- confirming the
     # writes Rust made landed on the exact connection ctypes opened, not a copy.

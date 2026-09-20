@@ -1,7 +1,7 @@
 """All three ways into sqlite_rs must report the exact same SQLite build.
 
 sqlite_rs.sqlite3 (the CPython clone module), sqlite_rs._core (this
-project's Rust extension, via query_via_rust), and raw ctypes against
+project's Rust extension, via execute_and_fetch_all), and raw ctypes against
 sqlite_rs.LIBSQLITE3_PATH are meant to be three different callers of the
 *one* bundled libsqlite3 (see test_single_libsqlite3_instance.py, which
 checks that at the loaded-library level). This checks it at the SQL/C-API
@@ -41,11 +41,12 @@ def _clone_module_facts() -> tuple[str, str, set[str]]:
 
 def _core_facts() -> tuple[str, str, set[str]]:
     conn = sqlite_rs.sqlite3.connect(":memory:")
-    [[version, source_id]] = sqlite_rs.query_via_rust(
+    [[version, source_id]] = sqlite_rs.execute_and_fetch_all(
         conn, "SELECT sqlite_version(), sqlite_source_id()"
     )
     options = {
-        str(row[0]) for row in sqlite_rs.query_via_rust(conn, "PRAGMA compile_options")
+        str(row[0])
+        for row in sqlite_rs.execute_and_fetch_all(conn, "PRAGMA compile_options")
     }
     conn.close()
     return str(version), str(source_id), options
@@ -53,7 +54,7 @@ def _core_facts() -> tuple[str, str, set[str]]:
 
 def _ctypes_facts() -> tuple[str, str, set[str]]:
     # str(), not the bare Path: see the matching comment in
-    # test_query_via_rust.py's libsqlite3 fixture -- ctypes.CDLL on Windows
+    # test_connection_via_rust.py's libsqlite3 fixture -- ctypes.CDLL on Windows
     # Python 3.11 rejects a PathLike name outright.
     lib = ctypes.CDLL(str(sqlite_rs.LIBSQLITE3_PATH))
 

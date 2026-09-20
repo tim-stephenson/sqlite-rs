@@ -5,11 +5,11 @@ import sqlite_rs.sqlite3
 
 LIBSQLITE3_PATH: Path
 
-def query_via_rust(
+def execute_and_fetch_all(
     connection: sqlite_rs.sqlite3.Connection, sql: str
 ) -> list[list[object]]: ...
 def get_raw_db_ptr(connection: sqlite_rs.sqlite3.Connection) -> ctypes.c_void_p: ...
-def query_via_raw_pointer(
+def execute_and_fetch_all_via_raw_pointer(
     db_ptr: int | ctypes.c_void_p, sql: str
 ) -> list[list[object]]: ...
 def get_raw_stmt_ptr(cursor: sqlite_rs.sqlite3.Cursor) -> ctypes.c_void_p: ...

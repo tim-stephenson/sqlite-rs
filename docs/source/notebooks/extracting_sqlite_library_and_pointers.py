@@ -64,7 +64,7 @@ def _(conn):
 @app.cell
 def _(conn, sqlite_rs):
     # Same live connection, read from the Rust side.
-    sqlite_rs.query_via_rust(conn, "SELECT * FROM t")
+    sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")
     return
 
 
@@ -72,7 +72,7 @@ def _(conn, sqlite_rs):
 def _(conn, sqlite_rs):
     # Write from the Rust side, then read back through the Python clone
     # module -- both sides are operating on the exact same sqlite3*.
-    sqlite_rs.query_via_rust(conn, "INSERT INTO t VALUES (2, 'hello from rust')")
+    sqlite_rs.execute_and_fetch_all(conn, "INSERT INTO t VALUES (2, 'hello from rust')")
     conn.execute("SELECT * FROM t ORDER BY a").fetchall()
     return
 
@@ -89,7 +89,7 @@ def _(conn, sqlite_rs):
 @app.cell
 def _(ctypes, sqlite_rs):
     # Load the bundled libsqlite3 directly -- the same shared library file
-    # sqlite_rs.sqlite3.connect() and query_via_rust are both already using
+    # sqlite_rs.sqlite3.connect() and execute_and_fetch_all are both already using
     # -- via plain ctypes, no sqlite_rs API involved in this cell at all.
     libsqlite3 = ctypes.CDLL(sqlite_rs.LIBSQLITE3_PATH)
     libsqlite3.sqlite3_exec.argtypes = [

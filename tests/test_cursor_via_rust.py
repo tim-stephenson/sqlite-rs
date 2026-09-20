@@ -1,7 +1,7 @@
 """Tests for the cursor half of the shared-SQLite API.
 
 `sqlite_rs.sqlite3` cursors, the Rust extension, and raw ctypes all act on one
-`sqlite3_stmt*`, the same way the tests in test_query_via_rust.py show they all
+`sqlite3_stmt*`, the same way the tests in test_connection_via_rust.py show they all
 act on one `sqlite3*`. SQLite has no cursor object of its own: a DB-API cursor
 is a prepared statement, so `get_raw_stmt_ptr` hands out a `sqlite3_stmt*`.
 """
@@ -61,7 +61,7 @@ def test_fetch_all_returns_every_row() -> None:
     assert sqlite_rs.fetch_all(cur) == [[1, "x"], [2, "y"], [3, "z"]]
 
 
-def test_fetch_all_decodes_column_types_like_query_via_rust() -> None:
+def test_fetch_all_decodes_column_types_like_execute_and_fetch_all() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
     _ = conn.execute("CREATE TABLE v (i INTEGER, r REAL, t TEXT, n)")
     _ = conn.execute("INSERT INTO v VALUES (7, 1.5, 'txt', NULL)")
@@ -69,7 +69,7 @@ def test_fetch_all_decodes_column_types_like_query_via_rust() -> None:
     via_cursor = sqlite_rs.fetch_all(conn.execute("SELECT * FROM v"))
 
     assert via_cursor == [[7, 1.5, "txt", None]]
-    assert via_cursor == sqlite_rs.query_via_rust(conn, "SELECT * FROM v")
+    assert via_cursor == sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM v")
 
 
 def test_fetch_all_round_trips_a_blob() -> None:

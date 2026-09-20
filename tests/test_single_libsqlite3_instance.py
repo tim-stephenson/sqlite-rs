@@ -6,7 +6,7 @@ sqlite_rs._core (this project's Rust extension) and sqlite_rs.sqlite3._sqlite3
 (the CPython clone module, plain C compiled directly by build.rs) are both
 meant to dynamically link the exact same bundled libsqlite3 -- see
 python/sqlite_rs/__init__.py's module docstring and native/sqlite_rs_shim.c.
-query_via_rust/get_raw_db_ptr pass a raw sqlite3* between them, which is only
+execute_and_fetch_all/get_raw_db_ptr pass a raw sqlite3* between them, which is only
 well-defined if there truly is one shared library instance backing both.
 
 A wheel "repair" step (auditwheel-style manylinux compliance, or an
@@ -156,7 +156,7 @@ def test_core_and_clone_module_share_one_bundled_libsqlite3_instance() -> None:
     # Exercise both consumers, in case either's dependency is lazily loaded.
     conn = sqlite_rs.sqlite3.connect(":memory:")
     _ = conn.execute("SELECT 1")
-    _ = sqlite_rs.query_via_rust(conn, "SELECT 1")
+    _ = sqlite_rs.execute_and_fetch_all(conn, "SELECT 1")
 
     bundled = sqlite_rs.LIBSQLITE3_PATH.resolve()
     assert bundled.is_file()
