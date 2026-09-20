@@ -77,7 +77,8 @@ jobs:
           python-version: "3.14"
       # Needed for build.rs's generated stubs, not for the compiled module.
       - run: uv run maturin develop --uv
-      - run: uv run basedpyright . --warnings
+      # --group bench: scripts/benchmark_fetch_all.py imports polars.
+      - run: uv run --group bench basedpyright . --warnings
 
   linux:
     runs-on: ubuntu-22.04
