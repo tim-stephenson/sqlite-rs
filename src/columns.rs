@@ -166,25 +166,14 @@ fn replay<A: Array + 'static>(array: &A, target: &mut ColumnBuilder, cell: impl 
 
 /// How a value reads once its column has been promoted to TEXT.
 ///
-/// Integers, and reals with no fractional part, match `CAST(x AS TEXT)`: 1
-/// renders "1" and 2.0 renders "2.0" rather than losing the ".0". Other reals
-/// use Rust's shortest representation that round-trips, which agrees with
-/// SQLite for ordinary values but not everywhere -- SQLite's own `%!.15g`
-/// prints 1e20 as "1.0e+20" where this gives "100000000000000000000.0", emits
-/// 0.33333333333333332 where this gives 0.3333333333333333, and normalises
-/// -0.0 to "0.0". Matching it exactly would mean reimplementing that
-/// formatter; these arrays are not claimed to be byte-identical to CAST.
+/// Numbers use Rust's shortest representation that round-trips. That is not
+/// character-for-character what `CAST(x AS TEXT)` produces -- SQLite has its
+/// own float formatter -- and deliberately makes no attempt to be.
 fn text_of(cell: Cell<'_>) -> String {
     match cell {
         Cell::Null => String::new(),
         Cell::Int(v) => v.to_string(),
-        Cell::Real(v) => {
-            if v.is_finite() && v == v.trunc() {
-                format!("{v:.1}")
-            } else {
-                format!("{v}")
-            }
-        }
+        Cell::Real(v) => v.to_string(),
         Cell::Text(v) => v.to_string(),
         Cell::Blob(v) => String::from_utf8_lossy(v).into_owned(),
     }

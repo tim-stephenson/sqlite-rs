@@ -96,8 +96,9 @@ def test_each_storage_class_maps_to_an_arrow_type(
         ([1.5, "x"], "utf8", ["1.5", "x"]),
         (["x", b"\xff"], "binary", [b"x", b"\xff"]),
         ([1, b"\xff"], "binary", [b"1", b"\xff"]),
-        # An integral REAL keeps its ".0", as CAST(2.0 AS TEXT) does.
-        ([2.0, "x"], "utf8", ["2.0", "x"]),
+        # Numbers render as Rust's shortest round-tripping form; no attempt is
+        # made to match CAST(x AS TEXT) character for character.
+        ([2.0, "x"], "utf8", ["2", "x"]),
     ],
 )
 def test_mixed_columns_promote_left_to_right(
@@ -114,12 +115,18 @@ def test_promotion_is_one_way() -> None:
 
 
 def test_promotion_is_applied_step_by_step() -> None:
-    # 1 is widened to REAL when 2.5 arrives, so by the time BLOB forces the
-    # final type it reads "1.0" rather than the "1" a direct INTEGER -> BLOB
-    # promotion would have produced.
-    assert _untyped_column([1, 2.5, b"\xff"]) == (
-        "binary",
-        [b"1.0", b"2.5", b"\xff"],
+    # Promotion walks the order one step at a time rather than jumping to the
+    # final type, and the REAL step is lossy past 2**53. Going straight to TEXT
+    # keeps every digit; going via REAL does not.
+    beyond_float_precision = 2**53 + 1
+
+    assert _untyped_column([beyond_float_precision, "x"]) == (
+        "utf8",
+        ["9007199254740993", "x"],
+    )
+    assert _untyped_column([beyond_float_precision, 2.5, "x"]) == (
+        "utf8",
+        ["9007199254740992", "2.5", "x"],
     )
 
 
@@ -135,8 +142,7 @@ def test_cursor_results_promote_identically() -> None:
 
     assert au.dtype(via_cursor) == au.dtype(via_connection)
     assert au.values(via_cursor) == au.values(via_connection)
-    # 1 is widened to REAL by 2.5 before TEXT forces the final type.
-    assert au.values(via_cursor) == ["1.0", "2.5", "x"]
+    assert au.values(via_cursor) == ["1", "2.5", "x"]
 
 
 def test_empty_result_has_columns_but_no_rows() -> None:
