@@ -75,8 +75,9 @@ add `--no-sync` to skip the rebuild once it is current.
 `uv sync --group bench` then `python scripts/benchmark_fetch_all.py` compares
 fetching a large table into polars against stdlib `sqlite3`'s `fetchall()`. It
 needs `maturin develop --release`; `sqlite_rs.DEBUG_BUILD` says which you have.
-On one machine, 10M rows of a four-column STRICT table: 1.07s and 0.69 GB
-against 6.63s and 3.27 GB.
+`fetchall()` is where stdlib stops -- it is not charged for arranging its rows
+into anything. On one machine, 10M rows of a four-column STRICT table: 1.08s
+and 0.69 GB against 4.41s and 2.06 GB.
 
 `bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
 resolve the vendored CPython headers in `native/`.

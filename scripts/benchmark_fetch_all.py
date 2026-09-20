@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Compare sqlite_rs.execute_and_fetch_all against stdlib sqlite3 fetchall().
 
-Both read an entire on-disk table into a polars DataFrame. sqlite_rs hands
-polars Arrow arrays over the PyCapsule interface, one per column, so the data
-never becomes Python objects; stdlib sqlite3 materialises a tuple per row and a
-Python object per cell, which polars then has to transpose.
+Both read an entire on-disk table. sqlite_rs goes all the way to a polars
+DataFrame, handing polars one Arrow array per column over the PyCapsule
+interface, so the data never becomes Python objects. stdlib sqlite3 stops at
+fetchall(), which is already a tuple per row and a Python object per cell; it
+is not charged for arranging those into anything.
 
 Usage:
     python scripts/benchmark_fetch_all.py                  # 100M rows, both modes
@@ -129,12 +130,9 @@ def fetch_via_sqlite_rs(db: Path) -> tuple[int, int]:
 
 
 def fetch_via_stdlib(db: Path) -> tuple[int, int]:
-    import polars as pl  # noqa: PLC0415
-
     cursor = sqlite3.connect(db).execute("SELECT i, r, s, b FROM t")
     rows = cursor.fetchall()
-    frame = pl.DataFrame(rows, schema=list(COLUMNS), orient="row")
-    return frame.height, frame.width
+    return len(rows), len(COLUMNS)
 
 
 def run_child(mode: str, db: Path) -> None:
