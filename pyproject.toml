@@ -24,6 +24,7 @@ dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://github.com/tim-stephenson/sqlite-rs"
+Documentation = "https://tim-stephenson.github.io/sqlite-rs/"
 Repository = "https://github.com/tim-stephenson/sqlite-rs"
 Issues = "https://github.com/tim-stephenson/sqlite-rs/issues"
 

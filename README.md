@@ -28,8 +28,9 @@ is not even charged for building the frame.
 Supported on CPython 3.11-3.15, including free-threaded 3.15t, for Linux
 (glibc and musl), macOS and Windows.
 
-Documentation: quick start, the API, and the benchmarks in full are in `docs/`
-(`uv run sphinx-autobuild docs/source docs/build`).
+Documentation, with a quick start, the API and the benchmarks in full:
+<https://tim-stephenson.github.io/sqlite-rs/>. To work on it locally,
+`uv run sphinx-autobuild docs/source docs/build`.
 
 
 ## Development
