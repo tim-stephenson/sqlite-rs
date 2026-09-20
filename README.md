@@ -1,6 +1,21 @@
 # sqlite-rs
 
-A drop-in superset of Python's `sqlite3` bindings, extended with Rust.
+A drop-in superset of Python's `sqlite3` bindings, extended with Rust for
+performant Arrow interoperability.
+
+Ten million rows of a four-column table, read into a polars `DataFrame` --
+seconds and peak memory, each row measured on one GitHub runner:
+
+| | sqlite_rs | adbc | stdlib `sqlite3` |
+| --- | --- | --- | --- |
+| macOS, arm64 | **1.94s** / 0.79 GB | 4.65s / 1.27 GB | 9.45s / 2.74 GB |
+| Linux, x86-64 | **1.85s** / 0.81 GB | 4.09s / 1.74 GB | 7.86s / 2.76 GB |
+| Windows, x86-64 | **1.60s** / 0.80 GB | 2.13s / 1.49 GB | 8.27s / 2.81 GB |
+
+stdlib is let off lightest of the three: `fetchall()` is where it stops, so it
+is never charged for building the frame at all. Compare down a column, not
+across -- a runner's own speed moves by up to 2x between runs, so only the
+three that shared a machine are comparable.
 
 `sqlite_rs.sqlite3` is a from-scratch build of CPython's own `sqlite3` module,
 used exactly like it. On top of that, `sqlite_rs` adds Rust functions that read
@@ -20,10 +35,6 @@ conn.execute("INSERT INTO t VALUES (1, 'x')")
 columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")
 pl.DataFrame([pl.Series(c) for c in columns])
 ```
-
-Ten million rows of a four-column table, into a polars `DataFrame`: **0.94s and
-0.48 GB**, against stdlib `fetchall()`'s 4.28s and 2.56 GB — and `fetchall()`
-is not even charged for building the frame.
 
 Supported on CPython 3.11-3.15, including free-threaded 3.15t, for Linux
 (glibc and musl), macOS and Windows.
