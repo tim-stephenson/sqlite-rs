@@ -72,6 +72,14 @@ def test_fetch_all_decodes_column_types_like_query_via_rust() -> None:
     assert via_cursor == sqlite_rs.query_via_rust(conn, "SELECT * FROM v")
 
 
+def test_fetch_all_round_trips_a_blob() -> None:
+    conn = sqlite_rs.sqlite3.connect(":memory:")
+    _ = conn.execute("CREATE TABLE b (data BLOB)")
+    _ = conn.execute("INSERT INTO b VALUES (?)", (b"\x00\xff",))
+
+    assert sqlite_rs.fetch_all(conn.execute("SELECT data FROM b")) == [[b"\x00\xff"]]
+
+
 def test_fetch_all_leaves_the_cursor_safely_exhausted() -> None:
     # Regression test. Draining the statement without releasing it leaves
     # pysqlite_Cursor.statement non-NULL with no row pending, which trips

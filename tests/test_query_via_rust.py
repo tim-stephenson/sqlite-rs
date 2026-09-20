@@ -59,6 +59,32 @@ def test_query_via_rust_reports_sql_errors() -> None:
         _ = sqlite_rs.query_via_rust(conn, "SELECT * FROM nonexistent")
 
 
+def test_rust_side_uses_the_same_sqlite_build_as_the_clone_module() -> None:
+    """Guard on which libsqlite3 the Rust extension actually linked.
+
+    libsqlite3-sys hardcodes its link name to `sqlite3`, while the bundled
+    library is deliberately named libsqlite_rs_sqlite3 (see build.rs's
+    shared_lib_name). If that wiring ever slips, _core links some other SQLite
+    -- the system one, most likely -- and these two versions diverge.
+    """
+    conn = sqlite_rs.sqlite3.connect(":memory:")
+
+    via_rust = sqlite_rs.query_via_rust(conn, "SELECT sqlite_version()")
+
+    assert via_rust == [[sqlite_rs.sqlite3.sqlite_version]]
+
+
+def test_query_via_rust_round_trips_a_blob() -> None:
+    # rusqlite's ValueRef::Blob; the hand-written FFI this replaced returned
+    # None for blob columns.
+    conn = sqlite_rs.sqlite3.connect(":memory:")
+    _ = conn.execute("CREATE TABLE b (data BLOB)")
+    blob = b"\x00\x01\xfe\xff"
+    _ = conn.execute("INSERT INTO b VALUES (?)", (blob,))
+
+    assert sqlite_rs.query_via_rust(conn, "SELECT data FROM b") == [[blob]]
+
+
 def test_query_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
     # The c_void_p from get_raw_db_ptr goes straight back in, without .value.
     conn = sqlite_rs.sqlite3.connect(":memory:")

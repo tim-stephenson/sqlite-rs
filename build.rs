@@ -643,6 +643,51 @@ fn compile_shim_and_link_core(native_dir: &Path, cpython_sqlite_dir: &Path, sqli
     }
 }
 
+/// Fill `target/sqlite3-link/` with a `libsqlite3`-named alias of the bundled
+/// library, for libsqlite3-sys.
+///
+/// It hardcodes its link name to `sqlite3` (see its `lib_name()`), which would
+/// pull in CPython's libsqlite3 instead of ours on a loader that matches by
+/// bare filename. Linking through an alias fixes that without patching the
+/// crate: the linker records the target's SONAME/install-name, not the name it
+/// resolved through, so `_core` still depends on libsqlite_rs_sqlite3.
+/// .cargo/config.toml points SQLITE3_LIB_DIR here. Must run after
+/// `build_libsqlite3`, whose Windows import library it copies.
+fn link_shim_dir(manifest_dir: &Path) {
+    let dir = manifest_dir.join("target/sqlite3-link");
+    // Empty, and deliberately so: .cargo/config.toml points PKG_CONFIG_LIBDIR
+    // here to stop pkg-config finding a system sqlite3 instead of ours.
+    fs::create_dir_all(dir.join("no-pkg-config"))
+        .unwrap_or_else(|e| panic!("failed to create {}: {e}", dir.display()));
+    let real = manifest_dir.join("python/sqlite_rs").join(shared_lib_name("sqlite3"));
+
+    if target_os() == "windows" {
+        // Windows links through an import library, whose own name is
+        // independent of the DLL's, so no alias is needed -- but it must be
+        // reachable from this directory too.
+        let implib = cargo_out_dir().join("sqlite3.lib");
+        fs::copy(&implib, dir.join("sqlite3.lib"))
+            .unwrap_or_else(|e| panic!("failed to copy {}: {e}", implib.display()));
+        return;
+    }
+
+    let alias = dir.join(shared_lib_name_for("sqlite3", "lib"));
+    let _ = fs::remove_file(&alias);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real, &alias)
+        .unwrap_or_else(|e| panic!("failed to link {} -> {}: {e}", alias.display(), real.display()));
+}
+
+/// `shared_lib_name` with a caller-chosen prefix, so the alias above can be
+/// plain `libsqlite3.{so,dylib}` while the real file keeps its project prefix.
+fn shared_lib_name_for(name: &str, prefix: &str) -> String {
+    match target_os().as_str() {
+        "macos" => format!("{prefix}{name}.dylib"),
+        "windows" => format!("{prefix}{name}.dll"),
+        _ => format!("{prefix}{name}.so"),
+    }
+}
+
 fn main() {
     let manifest_dir = manifest_dir();
     let sqlite_dir = manifest_dir.join("vendor/sqlite");
@@ -701,6 +746,7 @@ fn main() {
         .unwrap_or_else(|e| panic!("failed to create {}: {e}", sqlite3_pkg_dir.display()));
 
     let libsqlite3 = build_libsqlite3(&sqlite_dir, &python_pkg_dir);
+    link_shim_dir(&manifest_dir);
     println!("cargo:warning=built {}", libsqlite3.display());
 
     let clone_module =

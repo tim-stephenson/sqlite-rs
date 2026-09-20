@@ -18,6 +18,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pyo3 = "0.29.0"
+# default-features = false: the defaults pull a wasm toolchain we never use.
+rusqlite = { version = "0.40.2", default-features = false }
 
 [build-dependencies]
 cc = "1"
