@@ -4,7 +4,9 @@ build-backend = "maturin"
 
 [project]
 name = "sqlite-rs"
-description = "A drop-in superset of Python's sqlite3 bindings, extended with Rust."
+description = "A drop-in superset of Python's sqlite3 bindings, extended with Rust for performant Arrow interoperability."
+# The project page on PyPI is this file; without it the page is blank.
+readme = "README.md"
 authors = [
     { name = "Timothy Stephenson", email = "38039215+tim-stephenson@users.noreply.github.com" }
 ]
