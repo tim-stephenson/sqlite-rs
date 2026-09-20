@@ -33,6 +33,14 @@ Documentation, with a quick start, the API and the benchmarks in full:
 `uv run sphinx-autobuild docs/source docs/build`.
 
 
+## AI policy
+
+All of the code in this repository was written by an LLM. A human directed it
+throughout: the higher-level structure and the design choices are theirs, and
+the LLM wrote the code that followed from them. This documentation was written
+the same way.
+
+
 ## Development
 
 Needs Rust 1.98 or newer (see `rust-version` in Cargo.toml for why) and
