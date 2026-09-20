@@ -128,12 +128,25 @@ class _WindowsMemoryCounters(ctypes.Structure):
 def peak_rss_bytes() -> int:
     if sys.platform == "win32":
         # No getrusage on Windows; the peak working set is the counterpart.
+        # Both signatures have to be spelled out: GetCurrentProcess returns a
+        # pseudo-handle of (HANDLE)-1, and ctypes' default int restype
+        # truncates it to 32 bits, after which GetProcessMemoryInfo fails and
+        # leaves the counters zeroed.
+        current_process = ctypes.windll.kernel32.GetCurrentProcess
+        current_process.restype = ctypes.c_void_p
+        read_counters = ctypes.windll.psapi.GetProcessMemoryInfo
+        read_counters.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(_WindowsMemoryCounters),
+            ctypes.c_uint32,
+        )
+        read_counters.restype = ctypes.c_int
+
         counters = _WindowsMemoryCounters()
         counters.cb = ctypes.sizeof(counters)
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        _ = ctypes.windll.psapi.GetProcessMemoryInfo(
-            handle, ctypes.byref(counters), counters.cb
-        )
+        if not read_counters(current_process(), ctypes.byref(counters), counters.cb):
+            message = f"GetProcessMemoryInfo failed: {ctypes.GetLastError()}"
+            raise OSError(message)
         return int(counters.PeakWorkingSetSize)
 
     import resource  # noqa: PLC0415
@@ -307,9 +320,12 @@ def report(results: list[Result], rows: int) -> None:
     for mode, other in done.items():
         if mode == "sqlite_rs":
             continue
-        faster = other.seconds / ours.seconds
-        leaner = other.peak_rss / ours.peak_rss
-        print(f"\n  vs {mode}: {faster:.1f}x faster, {leaner:.1f}x less memory")
+        comparison = f"{other.seconds / ours.seconds:.1f}x faster"
+        # Timings are the result; if a platform's peak RSS did not come back,
+        # say so rather than lose the run to a division.
+        if ours.peak_rss and other.peak_rss:
+            comparison += f", {other.peak_rss / ours.peak_rss:.1f}x less memory"
+        print(f"\n  vs {mode}: {comparison}")
 
 
 def main() -> None:
