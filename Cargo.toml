@@ -34,10 +34,3 @@ rusqlite = { version = "0.40.2", default-features = false }
 cc = "1"
 pyo3-build-config = "0.29.0"
 
-# EXPERIMENT, every platform: narrow to wherever it earns its place. The fetch
-# grows one buffer per column by doubling, which HeapReAlloc cannot do in place
-# for a large block, and against ADBC -- which fills fixed batches and never
-# grows one -- sqlite_rs is worth 2.3x on Linux but only 1.4x on Windows.
-# Default features are mimalloc v3.
-[dependencies.mimalloc]
-version = "0.1.52"
