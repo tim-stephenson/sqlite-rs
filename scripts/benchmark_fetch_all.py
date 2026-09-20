@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""Compare sqlite_rs.execute_and_fetch_all against stdlib sqlite3 fetchall().
+
+Both read an entire on-disk table into a polars DataFrame. sqlite_rs hands
+polars Arrow arrays over the PyCapsule interface, one per column, so the data
+never becomes Python objects; stdlib sqlite3 materialises a tuple per row and a
+Python object per cell, which polars then has to transpose.
+
+Usage:
+    python scripts/benchmark_fetch_all.py                  # 100M rows, both modes
+    python scripts/benchmark_fetch_all.py --rows 5_000_000
+    python scripts/benchmark_fetch_all.py --db /tmp/bench.db --keep
+
+The table is STRICT, so every column holds exactly one storage class and
+sqlite_rs's type promotion never fires -- the case worth measuring.
+
+Each mode runs in its own subprocess, so peak memory is attributed to one mode
+and an out-of-memory in one does not take the other down with it. At 100M rows
+the stdlib path needs tens of gigabytes; being unable to finish is itself a
+result, and is reported as one.
+
+Needs the `bench` dependency group: uv sync --group bench
+"""
+
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
+import resource
+import sqlite3
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import cast
+
+BATCH = 1_000_000
+SCHEMA = """
+CREATE TABLE t (
+    i INTEGER NOT NULL,
+    r REAL    NOT NULL,
+    s TEXT    NOT NULL,
+    b BLOB    NOT NULL
+) STRICT
+"""
+# One statement per batch, generated inside SQLite: pushing 100M rows through
+# executemany() would measure Python's parameter binding, not the database.
+FILL = """
+INSERT INTO t (i, r, s, b)
+WITH RECURSIVE seq(n) AS (
+    SELECT ? UNION ALL SELECT n + 1 FROM seq WHERE n < ?
+)
+SELECT n, n * 1.5, 'row-' || n, randomblob(8) FROM seq
+"""
+COLUMNS = ("i", "r", "s", "b")
+
+
+@dataclasses.dataclass(frozen=True)
+class Result:
+    """One mode's outcome, passed from the child process as JSON."""
+
+    mode: str
+    seconds: float = 0.0
+    rows: int = 0
+    peak_rss: int = 0
+    error: str | None = None
+
+    @classmethod
+    def from_json(cls, blob: str) -> Result:
+        """Rebuild a Result from the JSON a child process printed."""
+        raw = cast("dict[str, object]", json.loads(blob))
+        return cls(
+            mode=str(raw["mode"]),
+            seconds=float(cast("float", raw.get("seconds", 0.0))),
+            rows=int(cast("int", raw.get("rows", 0))),
+            peak_rss=int(cast("int", raw.get("peak_rss", 0))),
+            error=cast("str | None", raw.get("error")),
+        )
+
+
+def peak_rss_bytes() -> int:
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # ru_maxrss is bytes on macOS and kilobytes on Linux.
+    return peak if sys.platform == "darwin" else peak * 1024
+
+
+def build(db: Path, rows: int) -> None:
+    if db.exists():
+        db.unlink()
+    conn = sqlite3.connect(db)
+    # Durability is irrelevant for a throwaway fixture and dominates the build.
+    _ = conn.execute("PRAGMA journal_mode = OFF")
+    _ = conn.execute("PRAGMA synchronous = OFF")
+    _ = conn.execute(SCHEMA)
+
+    started = time.perf_counter()
+    for start in range(1, rows + 1, BATCH):
+        end = min(start + BATCH - 1, rows)
+        _ = conn.execute(FILL, (start, end))
+        conn.commit()
+        done = end / rows
+        elapsed = time.perf_counter() - started
+        progress = f"{done:5.1%}, {elapsed:6.1f}s elapsed"
+        print(f"\r  building {end:,}/{rows:,} rows ({progress})", end="", flush=True)
+    conn.close()
+    size = db.stat().st_size
+    print(f"\r  built {rows:,} rows, {size / 1e9:.2f} GB on disk{' ' * 20}")
+
+
+def fetch_via_sqlite_rs(db: Path) -> tuple[int, int]:
+    # Imported here, not at module scope: only the child process doing this
+    # mode should pay for polars, and its import must not land inside the
+    # timed section either.
+    import polars as pl  # noqa: PLC0415
+    import sqlite_rs  # noqa: PLC0415
+    import sqlite_rs.sqlite3  # noqa: PLC0415
+
+    conn = sqlite_rs.sqlite3.connect(str(db))
+    columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT i, r, s, b FROM t")
+    frame = pl.DataFrame(
+        [pl.Series(n, c) for n, c in zip(COLUMNS, columns, strict=True)]
+    )
+    return frame.height, frame.width
+
+
+def fetch_via_stdlib(db: Path) -> tuple[int, int]:
+    import polars as pl  # noqa: PLC0415
+
+    cursor = sqlite3.connect(db).execute("SELECT i, r, s, b FROM t")
+    rows = cursor.fetchall()
+    frame = pl.DataFrame(rows, schema=list(COLUMNS), orient="row")
+    return frame.height, frame.width
+
+
+def run_child(mode: str, db: Path) -> None:
+    """Time one mode and report it as JSON on stdout."""
+    fetch = fetch_via_sqlite_rs if mode == "sqlite_rs" else fetch_via_stdlib
+    started = time.perf_counter()
+    try:
+        height, _ = fetch(db)
+    except MemoryError:
+        print(json.dumps(dataclasses.asdict(Result(mode=mode, error="MemoryError"))))
+        return
+    result = Result(
+        mode=mode,
+        seconds=time.perf_counter() - started,
+        rows=height,
+        peak_rss=peak_rss_bytes(),
+    )
+    print(json.dumps(dataclasses.asdict(result)))
+
+
+def run_mode(mode: str, db: Path) -> Result:
+    print(f"  {mode} ...", end="", flush=True)
+    finished = subprocess.run(  # noqa: S603
+        [sys.executable, __file__, "--child", mode, "--db", str(db)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if finished.returncode != 0:
+        # A kill by the OOM killer arrives here rather than as MemoryError.
+        detail = finished.stderr.strip().splitlines()
+        reason = detail[-1] if detail else f"exited {finished.returncode}"
+        print(f"\r  {mode}: FAILED -- {reason}")
+        return Result(mode=mode, error=reason)
+
+    result = Result.from_json(finished.stdout)
+    if result.error:
+        print(f"\r  {mode}: FAILED -- {result.error}")
+    else:
+        peak = result.peak_rss / 1e9
+        print(f"\r  {mode}: {result.seconds:.2f}s, peak RSS {peak:.2f} GB")
+    return result
+
+
+def report(results: list[Result], rows: int) -> None:
+    print(f"\n  {'mode':<12} {'seconds':>9} {'rows/s':>14} {'peak RSS':>11}")
+    print(f"  {'-' * 12} {'-' * 9} {'-' * 14} {'-' * 11}")
+    for result in results:
+        if result.error:
+            print(f"  {result.mode:<12} {result.error:>9}")
+        else:
+            rate = rows / result.seconds
+            peak = result.peak_rss / 1e9
+            row = f"{result.seconds:>9.2f} {rate:>14,.0f} {peak:>8.2f} GB"
+            print(f"  {result.mode:<12} {row}")
+
+    done = {r.mode: r for r in results if not r.error}
+    if {"sqlite_rs", "stdlib"} <= done.keys():
+        ours, theirs = done["sqlite_rs"], done["stdlib"]
+        faster = theirs.seconds / ours.seconds
+        leaner = theirs.peak_rss / ours.peak_rss
+        print(f"\n  sqlite_rs: {faster:.1f}x faster, {leaner:.1f}x less memory")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    _ = parser.add_argument("--rows", type=int, default=100_000_000)
+    _ = parser.add_argument("--db", type=Path, default=Path("bench.db"))
+    _ = parser.add_argument(
+        "--mode", choices=["both", "sqlite_rs", "stdlib"], default="both"
+    )
+    _ = parser.add_argument(
+        "--rebuild", action="store_true", help="rebuild even if the db exists"
+    )
+    _ = parser.add_argument(
+        "--keep", action="store_true", help="keep the database afterwards"
+    )
+    _ = parser.add_argument("--child", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    # argparse hands back an untyped Namespace.
+    child = cast("str | None", args.child)
+    db = cast("Path", args.db)
+    rows = cast("int", args.rows)
+    mode = cast("str", args.mode)
+
+    if child:
+        run_child(child, db)
+        return
+
+    print(f"\nsqlite_rs fetch benchmark -- {rows:,} rows, STRICT table\n")
+    if cast("bool", args.rebuild) or not db.exists():
+        build(db, rows)
+    else:
+        print(f"  reusing {db} ({db.stat().st_size / 1e9:.2f} GB); --rebuild to redo")
+
+    modes = ["sqlite_rs", "stdlib"] if mode == "both" else [mode]
+    report([run_mode(m, db) for m in modes], rows)
+
+    if not cast("bool", args.keep):
+        db.unlink(missing_ok=True)
+    print()
+
+
+if __name__ == "__main__":
+    main()

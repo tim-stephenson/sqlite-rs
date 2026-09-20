@@ -32,6 +32,12 @@ Issues = "https://github.com/tim-stephenson/sqlite-rs/issues"
 test = [
     "pytest",
 ]
+# Benchmarking only, and deliberately its own group: CI never installs it, so a
+# package without wheels for every supported interpreter cannot gate the test
+# matrix the way pyarrow once did.
+bench = [
+    "polars",
+]
 dev = [
     "maturin",
     "marimo",

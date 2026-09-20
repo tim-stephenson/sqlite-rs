@@ -72,6 +72,9 @@ and CPython `_sqlite` sources, materializes `python/sqlite_rs/sqlite3/` from
 `vendor/`, then builds `_core`. Every `uv run` re-syncs the project first, so
 add `--no-sync` to skip the rebuild once it is current.
 
+`uv sync --group bench` then `python scripts/benchmark_fetch_all.py` compares
+fetching a large table into polars against stdlib `sqlite3`'s `fetchall()`.
+
 `bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
 resolve the vendored CPython headers in `native/`.
 

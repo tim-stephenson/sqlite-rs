@@ -264,3 +264,5 @@ docs/source/_static/marimo_html
 # other catchall
 .DS_Store
 Cargo.lock
+# Throwaway fixture from scripts/benchmark_fetch_all.py
+bench.db
