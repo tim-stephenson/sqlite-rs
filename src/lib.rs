@@ -43,62 +43,70 @@ mod _core {
         module.add("DEBUG_BUILD", cfg!(debug_assertions))
     }
 
-    /// Run `sql` against the sqlite3* backing `connection`, and return the
-    /// result rows. `connection` must be a Connection object created by
-    /// sqlite_rs's own clone of CPython's sqlite3 module (see
-    /// `require_own_connection` below for why). This exists to prove that
-    /// the same live SQLite connection is genuinely shared between the
-    /// Python clone module and this Rust extension (both dynamically link
-    /// the same `libsqlite3`), not just built from source-identical but
-    /// independent copies.
+    /// Run one SQL statement on `connection` and return its columns.
+    ///
+    /// One Arrow array per result column, each as long as the number of rows;
+    /// `[]` for a statement that returns no columns, such as an INSERT.
+    ///
+    /// `connection` must come from `sqlite_rs.sqlite3.connect()` rather than
+    /// the stdlib `sqlite3` module -- see `require_own` for why. Raises
+    /// `TypeError` if it does not, and `ValueError` for a closed connection,
+    /// a SQL error, or SQL holding more than one statement.
     #[pyfunction]
     fn execute_and_fetch_all(connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
         run_query(connection_db(&connection)?, sql)
     }
 
-    /// Return the raw `sqlite3*` backing `connection` as a `ctypes.c_void_p`,
-    /// so it can be handed directly to an unrelated FFI caller -- e.g.
-    /// ctypes calling straight into the bundled `libsqlite3` -- and used to
-    /// operate on the exact same live connection sqlite_rs opened. Same
-    /// `connection` requirement as `execute_and_fetch_all` above.
+    /// Return the `sqlite3*` backing `connection` as a `ctypes.c_void_p`.
+    ///
+    /// The bundled `libsqlite3` is the one this extension, the clone module
+    /// and a `ctypes.CDLL(LIBSQLITE3_PATH)` caller all link, so the pointer
+    /// can go straight to any of them and drives the same live connection.
+    /// It stays owned by `connection` and is valid until that is closed.
+    ///
+    /// Same `connection` requirement as `execute_and_fetch_all`.
     #[pyfunction]
     fn get_raw_db_ptr(py: Python<'_>, connection: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         c_void_p(py, connection_db(&connection)? as usize)
     }
 
-    /// Run `sql` against the raw `sqlite3*` at `db_ptr` (as returned by, for
-    /// instance, ctypes calling `sqlite3_open` against the bundled
-    /// `libsqlite3` directly). This is the mirror image of
-    /// `get_raw_db_ptr`: it lets an external caller's connection be driven
-    /// from the Rust side, proving the sharing works in both directions,
-    /// not just from a `Connection` object outward. Unlike the two
-    /// functions above, there's no type to check here -- an arbitrary raw
-    /// pointer is trusted as-is, per its documented contract.
+    /// `execute_and_fetch_all` against a `sqlite3*` the caller already holds,
+    /// from `get_raw_db_ptr` or from an FFI caller's own `sqlite3_open`.
+    ///
+    /// The mirror of `get_raw_db_ptr`, so a connection can be driven from
+    /// either side. There is no object to type-check here: the pointer is
+    /// trusted as given. Raises `TypeError` unless it is an address or a
+    /// ctypes pointer, and `ValueError` if it is null or the SQL is
+    /// rejected.
     #[pyfunction]
     fn execute_and_fetch_all_via_raw_pointer(db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
         run_query(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)
     }
 
-    /// Return the raw `sqlite3_stmt*` backing `cursor` as a
-    /// `ctypes.c_void_p`, the cursor-level counterpart to
-    /// `get_raw_db_ptr`. SQLite has no cursor object of its own -- a DB-API
-    /// cursor is a prepared statement -- so this is a `sqlite3_stmt*`, which
-    /// is what an FFI caller passes to `sqlite3_step`, `sqlite3_column_*`
-    /// and friends. `cursor` must come from `sqlite_rs.sqlite3`, for the
-    /// same struct-layout reason as `execute_and_fetch_all`.
+    /// Return the `sqlite3_stmt*` backing `cursor` as a `ctypes.c_void_p`,
+    /// the cursor-level counterpart to `get_raw_db_ptr`.
+    ///
+    /// SQLite has no cursor object of its own -- a DB-API cursor is a
+    /// prepared statement -- so this is what an FFI caller passes to
+    /// `sqlite3_step` and `sqlite3_column_*`. It stays owned by `cursor`.
+    ///
+    /// `cursor` must come from `sqlite_rs.sqlite3`, for the same reason as
+    /// `execute_and_fetch_all`.
     #[pyfunction]
     fn get_raw_stmt_ptr(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
         c_void_p(py, cursor_stmt(py, &cursor)? as usize)
     }
 
-    /// Drain `cursor`'s underlying statement from the Rust side and return
-    /// the rows, decoding columns exactly as `execute_and_fetch_all` does.
+    /// Drain `cursor`'s statement and return its columns, decoded exactly as
+    /// `execute_and_fetch_all` decodes them.
     ///
-    /// This steps the very same `sqlite3_stmt*` the Python cursor iterates,
-    /// so the two share position: rows returned here are rows the cursor
-    /// will no longer yield, and a cursor already exhausted returns none.
-    /// That shared state is the point -- it is the cursor-level equivalent
-    /// of two consumers sharing one live connection.
+    /// This steps the very statement the Python cursor iterates, so the two
+    /// share position: rows returned here are rows the cursor will no longer
+    /// yield, and a cursor already exhausted returns none. The cursor is left
+    /// exhausted but usable -- `execute()` it again to reuse it.
+    ///
+    /// Raises `TypeError` for a cursor from the stdlib `sqlite3`, and
+    /// `ValueError` for one that is closed or has never executed.
     #[pyfunction]
     fn fetch_all(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Vec<PyArray>> {
         let stmt = cursor_stmt(py, &cursor)?;
@@ -109,10 +117,12 @@ mod _core {
         rows
     }
 
-    /// `fetch_all` against a raw `sqlite3_stmt*`, as returned by
-    /// `get_raw_stmt_ptr` or by an unrelated FFI caller's own
-    /// `sqlite3_prepare_v2`. The mirror of `execute_and_fetch_all_via_raw_pointer`: an
-    /// arbitrary pointer is trusted as-is, per its documented contract.
+    /// `fetch_all` against a `sqlite3_stmt*` the caller already holds, from
+    /// `get_raw_stmt_ptr` or from an FFI caller's own `sqlite3_prepare_v2`.
+    ///
+    /// The statement is stepped to exhaustion but never finalized, since it
+    /// belongs to the caller. As with the other raw-pointer entry point, the
+    /// pointer is trusted as given.
     ///
     /// If the pointer came from a live Python cursor, that cursor must not be
     /// used afterwards. Only a pointer is passed here, so there is no cursor
