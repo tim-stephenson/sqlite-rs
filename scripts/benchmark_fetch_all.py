@@ -19,7 +19,11 @@ and an out-of-memory in one does not take the other down with it. At 100M rows
 the stdlib path needs tens of gigabytes; being unable to finish is itself a
 result, and is reported as one.
 
-Needs the `bench` dependency group: uv sync --group bench
+Needs the `bench` dependency group, and a release build of the extension --
+a debug one is roughly 3x slower, and is refused rather than reported:
+
+    uv sync --group bench
+    uv run maturin develop --uv --release
 """
 
 from __future__ import annotations
@@ -151,6 +155,16 @@ def run_child(mode: str, db: Path) -> None:
     print(json.dumps(dataclasses.asdict(result)))
 
 
+def require_release_build() -> None:
+    """Refuse to report numbers from an unoptimized build of the extension."""
+    import sqlite_rs  # noqa: PLC0415
+
+    if sqlite_rs.DEBUG_BUILD:
+        cost = "sqlite_rs was built without optimization: roughly 3x slower here."
+        fix = "uv run maturin develop --uv --release"
+        sys.exit(f"{cost}\n  Rebuild with: {fix}")
+
+
 def run_mode(mode: str, db: Path) -> Result:
     print(f"  {mode} ...", end="", flush=True)
     finished = subprocess.run(  # noqa: S603
@@ -227,6 +241,8 @@ def main() -> None:
         print(f"  reusing {db} ({db.stat().st_size / 1e9:.2f} GB); --rebuild to redo")
 
     modes = ["sqlite_rs", "stdlib"] if mode == "both" else [mode]
+    if "sqlite_rs" in modes:
+        require_release_build()
     report([run_mode(m, db) for m in modes], rows)
 
     if not cast("bool", args.keep):

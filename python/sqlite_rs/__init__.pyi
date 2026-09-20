@@ -6,6 +6,10 @@ import sqlite_rs.sqlite3
 
 LIBSQLITE3_PATH: Path
 
+# True when _core was built without optimization, which costs roughly 3x on a
+# large fetch.
+DEBUG_BUILD: bool
+
 # An Arrow array exported over the PyCapsule interface. Anything speaking that
 # protocol -- pyarrow, polars, duckdb, arro3 -- consumes these without a copy,
 # and sqlite_rs needs no Arrow package of its own installed to produce them.

@@ -35,6 +35,7 @@ if sys.platform == "win32":
     _ = os.add_dll_directory(str(Path(__file__).parent))
 
 from sqlite_rs._core import (
+    DEBUG_BUILD,  # pyright: ignore[reportUnknownVariableType]
     execute_and_fetch_all,  # pyright: ignore[reportUnknownVariableType]
     execute_and_fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     fetch_all,  # pyright: ignore[reportUnknownVariableType]
@@ -58,6 +59,7 @@ _LIBSQLITE3_NAME = _LIBSQLITE3_NAMES.get(sys.platform, "libsqlite_rs_sqlite3.so"
 LIBSQLITE3_PATH = Path(__file__).parent / _LIBSQLITE3_NAME
 
 __all__ = [
+    "DEBUG_BUILD",
     "LIBSQLITE3_PATH",
     "execute_and_fetch_all",
     "execute_and_fetch_all_via_raw_pointer",

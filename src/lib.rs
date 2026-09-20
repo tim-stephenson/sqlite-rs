@@ -35,6 +35,14 @@ mod _core {
     use rusqlite::types::ValueRef;
     use std::sync::Arc;
 
+    /// True when this extension was built without optimization, which costs
+    /// roughly 3x on a large fetch. Only `scripts/benchmark_fetch_all.py`
+    /// reads it, to refuse to report numbers from a debug build.
+    #[pymodule_init]
+    fn init(module: &Bound<'_, PyModule>) -> PyResult<()> {
+        module.add("DEBUG_BUILD", cfg!(debug_assertions))
+    }
+
     /// Run `sql` against the sqlite3* backing `connection`, and return the
     /// result rows. `connection` must be a Connection object created by
     /// sqlite_rs's own clone of CPython's sqlite3 module (see
