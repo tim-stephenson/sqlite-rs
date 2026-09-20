@@ -1,5 +1,5 @@
 source: https://github.com/python/cpython
-tag: v3.13.14
-commit: fd17997c3866d61e0e7bd8201b1d8f35b40a40bd
+tag: v3.13.15
+commit: 4061bc4c35f7c26f25264666d4ba083b93d2f6f9
 path: Modules/_sqlite
 path: Lib/sqlite3 (files: __init__.py, dbapi2.py, dump.py)
