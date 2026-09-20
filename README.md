@@ -12,18 +12,18 @@ on the *same* live connection: the clone module, the Rust extension and raw
 import sqlite_rs
 import sqlite_rs.sqlite3
 
-conn = sqlite_rs.sqlite3.connect(":memory:")      # exactly like stdlib sqlite3
+conn = sqlite_rs.sqlite3.connect(":memory:")  # exactly like stdlib sqlite3
 conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
 
 sqlite_rs.execute_and_fetch_all(conn, "INSERT INTO t VALUES (1, 'x')")
-sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")   # [[1, 'x']]
+sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")  # [[1, 'x']]
 
 cur = conn.execute("SELECT * FROM t")
-sqlite_rs.get_raw_stmt_ptr(cur)     # ctypes.c_void_p -> sqlite3_stmt*
-sqlite_rs.fetch_all(cur)            # [[1, 'x']] -- and leaves cur exhausted
+sqlite_rs.get_raw_stmt_ptr(cur)  # ctypes.c_void_p -> sqlite3_stmt*
+sqlite_rs.fetch_all(cur)  # [[1, 'x']] -- and leaves cur exhausted
 
-sqlite_rs.get_raw_db_ptr(conn)      # ctypes.c_void_p -> sqlite3*
-sqlite_rs.LIBSQLITE3_PATH           # the bundled library, for ctypes.CDLL
+sqlite_rs.get_raw_db_ptr(conn)  # ctypes.c_void_p -> sqlite3*
+sqlite_rs.LIBSQLITE3_PATH  # the bundled library, for ctypes.CDLL
 ```
 
 `execute_and_fetch_all_via_raw_pointer` and `fetch_all_via_raw_pointer` are the
