@@ -45,6 +45,41 @@ mod _core {
         module.add("DEBUG_BUILD", cfg!(debug_assertions))
     }
 
+    /// DIAGNOSTIC, to be removed: nanoseconds per call into the bundled
+    /// SQLite, against the same loop calling a function in this module.
+    ///
+    /// The fetch makes ~100M of these per 10M rows. ADBC statically links its
+    /// SQLite and runs at the same speed on Windows as on Linux, where this
+    /// crate -- which keeps SQLite as a separate library, so a connection can
+    /// be shared with the clone module -- is 1.4 to 1.7x slower on Windows.
+    /// This measures the boundary those calls cross.
+    #[pyfunction]
+    fn _diagnostic_call_ns(iterations: u64) -> (f64, f64) {
+        #[inline(never)]
+        fn local(x: i32) -> i32 {
+            std::hint::black_box(x)
+        }
+
+        let started = std::time::Instant::now();
+        let mut total: i32 = 0;
+        for _ in 0..iterations {
+            total = total.wrapping_add(unsafe { ffi::sqlite3_libversion_number() });
+        }
+        let across = started.elapsed().as_secs_f64();
+        std::hint::black_box(total);
+
+        let started = std::time::Instant::now();
+        let mut total: i32 = 0;
+        for i in 0..iterations {
+            total = total.wrapping_add(local(i as i32));
+        }
+        let inside = started.elapsed().as_secs_f64();
+        std::hint::black_box(total);
+
+        let per = |seconds: f64| seconds / iterations as f64 * 1e9;
+        (per(across), per(inside))
+    }
+
     /// Run one SQL statement on `connection` and return its columns.
     ///
     /// One Arrow array per result column, each as long as the number of rows;
