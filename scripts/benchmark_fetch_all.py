@@ -123,9 +123,9 @@ def fetch_via_sqlite_rs(db: Path) -> tuple[int, int]:
 
     conn = sqlite_rs.sqlite3.connect(str(db))
     columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT i, r, s, b FROM t")
-    frame = pl.DataFrame(
-        [pl.Series(n, c) for n, c in zip(COLUMNS, columns, strict=True)]
-    )
+    # Each array's name rides along in its exported Arrow schema, so polars
+    # names the Series itself.
+    frame = pl.DataFrame([pl.Series(c) for c in columns])
     return frame.height, frame.width
 
 
