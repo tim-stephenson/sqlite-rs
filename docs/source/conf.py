@@ -1,5 +1,6 @@
 # ruff: noqa: ARG001, A001, T201
 
+import ast
 import importlib.metadata
 import shutil
 import subprocess
@@ -127,5 +128,45 @@ def build_marimo_notebooks(app: Sphinx, config: Config) -> None:  # pyright: ign
     print("[Marimo Build] Check complete!\n")
 
 
+def stub_signatures() -> dict[str, tuple[str, str | None]]:
+    """(arguments, return annotation) for each function in the type stub.
+
+    pyo3 gives the extension's functions a signature at runtime but no
+    annotations, so autodoc can only show `execute_and_fetch_all(connection,
+    sql)`. The types are in the stub that type checkers already read; taking
+    them from there keeps one copy of each rather than restating them in a
+    docstring or a directive.
+    """
+    stub = Path(__file__).resolve().parents[2] / "python" / "sqlite_rs" / "__init__.pyi"
+    module = ast.parse(stub.read_text(encoding="utf-8"))
+    return {
+        node.name: (
+            f"({ast.unparse(node.args)})",
+            f"{ast.unparse(node.returns)}" if node.returns else None,
+        )
+        for node in module.body
+        if isinstance(node, ast.FunctionDef)
+    }
+
+
+_STUB_SIGNATURES = stub_signatures()
+
+
+# Sphinx dictates the parameter list; three of the seven are what we need.
+def use_stub_signature(  # noqa: PLR0913, PLR0917
+    app: Sphinx,  # pyright: ignore[reportUnusedParameter]
+    what: str,  # pyright: ignore[reportUnusedParameter]
+    name: str,
+    obj: object,  # pyright: ignore[reportUnusedParameter]
+    options: object,  # pyright: ignore[reportUnusedParameter]
+    signature: str | None,
+    return_annotation: str | None,
+) -> tuple[str | None, str | None]:
+    """Swap autodoc's untyped signature for the stub's typed one."""
+    unqualified = name.rsplit(".", maxsplit=1)[-1]
+    return _STUB_SIGNATURES.get(unqualified, (signature, return_annotation))
+
+
 def setup(app: Sphinx) -> None:
     _ = app.connect("config-inited", build_marimo_notebooks)
+    _ = app.connect("autodoc-process-signature", use_stub_signature)
