@@ -34,7 +34,7 @@ def test_execute_and_fetch_all_reads_rows_written_via_the_clone_module() -> None
 
     assert au.rows(columns) == [[1, "hello", 3.5]]
     assert [au.name(c) for c in columns] == ["a", "b", "c"]
-    assert [au.dtype(c) for c in columns] == ["int64", "utf8", "float64"]
+    assert [au.dtype(c) for c in columns] == ["int64", "utf8_view", "float64"]
 
 
 def test_execute_and_fetch_all_writes_are_visible_via_the_clone_module() -> None:
@@ -107,7 +107,7 @@ def test_execute_and_fetch_all_round_trips_a_blob() -> None:
     columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT data FROM b")
 
     assert au.rows(columns) == [[blob]]
-    assert au.dtype(columns[0]) == "binary"
+    assert au.dtype(columns[0]) == "binary_view"
 
 
 def test_execute_and_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> None:

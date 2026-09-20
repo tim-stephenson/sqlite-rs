@@ -40,9 +40,14 @@ the type that will keep coming. A wider value promotes what has accumulated,
 once, along SQLite's own storage class order:
 
 ```text
-NULL  <  INTEGER  <  REAL  <  TEXT  <  BLOB
- null    int64       float64  utf8     binary
+NULL  <  INTEGER  <  REAL     <  TEXT       <  BLOB
+null     int64      float64      utf8_view     binary_view
 ```
+
+TEXT and BLOB become Arrow's view layouts rather than the older
+offset-and-data ones, because views are what polars, DataFusion and arrow-rs
+hold strings in -- handing over anything else costs the consumer a conversion
+of the whole column.
 
 NULL never promotes anything, it only contributes a null slot; a column of
 nothing but NULLs stays Arrow `null`. Promotion is one-way, so a column is
@@ -110,9 +115,9 @@ a single call:
 pl.DataFrame(sqlite_rs.execute_and_fetch_table(conn, sql)).columns
 ```
 
-Neither form copies. At 10M rows, building the frame off either one costs no
-measurable time or memory for `int64` and `float64` columns; a `utf8` column
-costs polars a conversion into its own string layout, identically both ways.
+Neither form copies. At 10M rows across all four storage classes, building the
+frame off either one costs no measurable time and no measurable memory: polars
+adopts the buffers as they are.
 
 
 ## Development
@@ -135,8 +140,8 @@ add `--no-sync` to skip the rebuild once it is current.
 fetching a large table into polars against stdlib `sqlite3`'s `fetchall()`. It
 needs `maturin develop --release`; `sqlite_rs.DEBUG_BUILD` says which you have.
 `fetchall()` is where stdlib stops -- it is not charged for arranging its rows
-into anything. On one machine, 10M rows of a four-column STRICT table: 0.97s
-and 0.69 GB against 4.30s and 2.26 GB.
+into anything. On one machine, 10M rows of a four-column STRICT table: 0.91s
+and 0.27 GB against 4.55s and 1.83 GB.
 
 `bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
 resolve the vendored CPython headers in `native/`.

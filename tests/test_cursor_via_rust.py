@@ -73,7 +73,8 @@ def test_fetch_all_decodes_column_types_like_execute_and_fetch_all() -> None:
     assert au.rows(via_cursor) == au.rows(
         sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM v")
     )
-    assert [au.dtype(c) for c in via_cursor] == ["int64", "float64", "utf8", "null"]
+    expected = ["int64", "float64", "utf8_view", "null"]
+    assert [au.dtype(c) for c in via_cursor] == expected
 
 
 def test_fetch_all_round_trips_a_blob() -> None:

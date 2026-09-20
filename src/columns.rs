@@ -17,9 +17,14 @@
 //! NULL is the identity: it never promotes anything, it only contributes a null
 //! slot. Promotion is one-way, so a column is promoted at most four times
 //! regardless of how many rows it has.
+//!
+//! TEXT and BLOB build Arrow's view layouts rather than the older
+//! offset-and-data ones, because that is what polars (and DataFusion, and
+//! arrow-rs itself) hold strings in: handing over anything else costs the
+//! consumer a conversion of the whole column.
 
-use arrow_array::builder::{BinaryBuilder, Float64Builder, Int64Builder, StringBuilder};
-use arrow_array::{Array, ArrayRef, BinaryArray, Float64Array, Int64Array, NullArray, StringArray};
+use arrow_array::builder::{BinaryViewBuilder, Float64Builder, Int64Builder, StringViewBuilder};
+use arrow_array::{Array, ArrayRef, BinaryViewArray, Float64Array, Int64Array, NullArray, StringViewArray};
 use arrow_schema::{DataType, Field};
 use std::sync::Arc;
 
@@ -53,8 +58,8 @@ pub enum ColumnBuilder {
     Null(usize),
     Int(Int64Builder),
     Real(Float64Builder),
-    Text(StringBuilder),
-    Blob(BinaryBuilder),
+    Text(StringViewBuilder),
+    Blob(BinaryViewBuilder),
 }
 
 impl Default for ColumnBuilder {
@@ -136,8 +141,8 @@ impl ColumnBuilder {
         let mut new = match rank {
             1 => ColumnBuilder::Int(Int64Builder::new()),
             2 => ColumnBuilder::Real(Float64Builder::new()),
-            3 => ColumnBuilder::Text(StringBuilder::new()),
-            _ => ColumnBuilder::Blob(BinaryBuilder::new()),
+            3 => ColumnBuilder::Text(StringViewBuilder::new()),
+            _ => ColumnBuilder::Blob(BinaryViewBuilder::new()),
         };
         old.replay_into(&mut new);
         *self = new;
@@ -155,8 +160,8 @@ impl ColumnBuilder {
             ColumnBuilder::Real(mut b) => {
                 replay(&b.finish(), target, |a: &Float64Array, i| Cell::Real(a.value(i)));
             }
-            ColumnBuilder::Text(mut b) => replay(&b.finish(), target, |a: &StringArray, i| Cell::Text(a.value(i))),
-            ColumnBuilder::Blob(mut b) => replay(&b.finish(), target, |a: &BinaryArray, i| Cell::Blob(a.value(i))),
+            ColumnBuilder::Text(mut b) => replay(&b.finish(), target, |a: &StringViewArray, i| Cell::Text(a.value(i))),
+            ColumnBuilder::Blob(mut b) => replay(&b.finish(), target, |a: &BinaryViewArray, i| Cell::Blob(a.value(i))),
         }
     }
 
@@ -167,8 +172,8 @@ impl ColumnBuilder {
             ColumnBuilder::Null(nulls) => (Arc::new(NullArray::new(nulls)), DataType::Null),
             ColumnBuilder::Int(mut b) => (Arc::new(b.finish()), DataType::Int64),
             ColumnBuilder::Real(mut b) => (Arc::new(b.finish()), DataType::Float64),
-            ColumnBuilder::Text(mut b) => (Arc::new(b.finish()), DataType::Utf8),
-            ColumnBuilder::Blob(mut b) => (Arc::new(b.finish()), DataType::Binary),
+            ColumnBuilder::Text(mut b) => (Arc::new(b.finish()), DataType::Utf8View),
+            ColumnBuilder::Blob(mut b) => (Arc::new(b.finish()), DataType::BinaryView),
         };
         (array, Field::new(name, data_type, true))
     }

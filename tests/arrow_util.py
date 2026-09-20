@@ -16,7 +16,13 @@ from typing import ClassVar, Protocol, cast, final
 
 # Arrow C data interface format strings, for the types sqlite_rs produces.
 # https://arrow.apache.org/docs/format/CDataInterface.html#data-type-description-format-strings
-_FORMATS = {"n": "null", "l": "int64", "g": "float64", "u": "utf8", "z": "binary"}
+_FORMATS = {
+    "n": "null",
+    "l": "int64",
+    "g": "float64",
+    "vu": "utf8_view",
+    "vz": "binary_view",
+}
 
 
 @final

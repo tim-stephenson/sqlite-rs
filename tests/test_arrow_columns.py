@@ -66,8 +66,8 @@ def test_arrays_export_over_the_pycapsule_interface() -> None:
     [
         ("SELECT 1", "int64", [1]),
         ("SELECT 1.5", "float64", [1.5]),
-        ("SELECT 'x'", "utf8", ["x"]),
-        ("SELECT x'00ff'", "binary", [b"\x00\xff"]),
+        ("SELECT 'x'", "utf8_view", ["x"]),
+        ("SELECT x'00ff'", "binary_view", [b"\x00\xff"]),
         ("SELECT NULL", "null", [None]),
     ],
 )
@@ -92,13 +92,13 @@ def test_each_storage_class_maps_to_an_arrow_type(
         ([3, None], "int64", [3, None]),
         # Widening, in order.
         ([1, 2.5], "float64", [1.0, 2.5]),
-        ([1, "x"], "utf8", ["1", "x"]),
-        ([1.5, "x"], "utf8", ["1.5", "x"]),
-        (["x", b"\xff"], "binary", [b"x", b"\xff"]),
-        ([1, b"\xff"], "binary", [b"1", b"\xff"]),
+        ([1, "x"], "utf8_view", ["1", "x"]),
+        ([1.5, "x"], "utf8_view", ["1.5", "x"]),
+        (["x", b"\xff"], "binary_view", [b"x", b"\xff"]),
+        ([1, b"\xff"], "binary_view", [b"1", b"\xff"]),
         # Numbers render as Rust's shortest round-tripping form; no attempt is
         # made to match CAST(x AS TEXT) character for character.
-        ([2.0, "x"], "utf8", ["2", "x"]),
+        ([2.0, "x"], "utf8_view", ["2", "x"]),
     ],
 )
 def test_mixed_columns_promote_left_to_right(
@@ -111,7 +111,7 @@ def test_promotion_is_one_way() -> None:
     # A narrower value arriving later widens to the type already chosen; it
     # does not drag the column back down.
     assert _untyped_column([2.5, 1]) == ("float64", [2.5, 1.0])
-    assert _untyped_column(["x", 1]) == ("utf8", ["x", "1"])
+    assert _untyped_column(["x", 1]) == ("utf8_view", ["x", "1"])
 
 
 def test_promotion_is_applied_step_by_step() -> None:
@@ -121,11 +121,11 @@ def test_promotion_is_applied_step_by_step() -> None:
     beyond_float_precision = 2**53 + 1
 
     assert _untyped_column([beyond_float_precision, "x"]) == (
-        "utf8",
+        "utf8_view",
         ["9007199254740993", "x"],
     )
     assert _untyped_column([beyond_float_precision, 2.5, "x"]) == (
-        "utf8",
+        "utf8_view",
         ["9007199254740992", "2.5", "x"],
     )
 
