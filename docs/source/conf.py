@@ -35,7 +35,14 @@ extensions = [
 # The API pages are generated from the docstrings the extension carries at
 # runtime, so there is one copy of each and it is the one help() prints.
 autodoc_member_order = "bysource"
-autodoc_default_options = {"members": True, "undoc-members": False}
+# no-value: a constant's value here is whatever the machine that built the
+# docs had. DEBUG_BUILD published as "True" because this builds unoptimized,
+# which says nothing true about the package.
+autodoc_default_options = {
+    "members": True,
+    "undoc-members": False,
+    "no-value": True,
+}
 
 # Docstrings are written for help(), where `x` reads as code rather than as
 # reStructuredText's default "title reference".
