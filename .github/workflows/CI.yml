@@ -6,6 +6,11 @@ on:
     tags: ['*']
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish_to_testpypi:
+        description: Publish the wheels to TestPyPI (a rehearsal; a version can only go up once)
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -536,10 +541,18 @@ jobs:
         with:
           subject-path: 'wheels-*/*'
       - uses: astral-sh/setup-uv@v7
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
-      # Trusted publishing: PyPI mints a short-lived token from this job's
-      # OIDC identity, so there is no secret to hold or rotate. `always`
-      # rather than `automatic` so a misconfigured publisher fails here
-      # instead of quietly looking for a token that no longer exists.
+        if: ${{ startsWith(github.ref, 'refs/tags/') || inputs.publish_to_testpypi }}
+      # Trusted publishing: the index mints a short-lived token from this
+      # job's OIDC identity, so there is no secret to hold or rotate.
+      # `always` rather than `automatic` so a misconfigured publisher fails
+      # here instead of quietly looking for a token that no longer exists.
+      #
+      # TestPyPI is a separate index with its own publisher and its own copy
+      # of every version number, so a rehearsal there spends the version it
+      # uploads -- on TestPyPI only.
+      - if: ${{ inputs.publish_to_testpypi }}
+        run: >-
+          uv publish --trusted-publishing always
+          --publish-url https://test.pypi.org/legacy/ 'wheels-*/*'
       - if: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: uv publish --trusted-publishing always 'wheels-*/*'
