@@ -16,9 +16,16 @@ license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES", "vendor/cpython/*/LICENSE", "vendor/typeshed/LICENSE"]
 requires-python = ">=3.11"
 dependencies = []
+# No License classifier: `license` above is an SPDX expression (PEP 639), and
+# the two together are an error in current tooling.
 classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
 ]
 dynamic = ["version"]
 

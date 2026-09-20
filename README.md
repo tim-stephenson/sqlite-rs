@@ -1,5 +1,11 @@
 # sqlite-rs
 
+[![PyPI](https://img.shields.io/pypi/v/sqlite-rs?logo=pypi&logoColor=white)](https://pypi.org/project/sqlite-rs/)
+[![Python](https://img.shields.io/pypi/pyversions/sqlite-rs?logo=python&logoColor=white)](https://pypi.org/project/sqlite-rs/)
+[![Downloads](https://img.shields.io/pypi/dm/sqlite-rs?logo=pypi&logoColor=white)](https://pypi.org/project/sqlite-rs/)
+[![License](https://img.shields.io/github/license/tim-stephenson/sqlite-rs)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/tim-stephenson/sqlite-rs?logo=github)](https://github.com/tim-stephenson/sqlite-rs/stargazers)
+
 A drop-in superset of Python's `sqlite3` bindings, extended with Rust for
 performant Arrow interoperability.
 
