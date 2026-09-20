@@ -139,11 +139,20 @@ and CPython `_sqlite` sources, materializes `python/sqlite_rs/sqlite3/` from
 add `--no-sync` to skip the rebuild once it is current.
 
 `uv sync --group bench` then `python scripts/benchmark_fetch_all.py` compares
-fetching a large table into polars against stdlib `sqlite3`'s `fetchall()`. It
-needs `maturin develop --release`; `sqlite_rs.DEBUG_BUILD` says which you have.
-`fetchall()` is where stdlib stops -- it is not charged for arranging its rows
-into anything. On one machine, 10M rows of a four-column STRICT table: 0.97s
-and 0.47 GB against 4.46s and 2.45 GB.
+fetching a large table into polars against ADBC's SQLite driver and stdlib
+`sqlite3`. It needs `maturin develop --release`; `sqlite_rs.DEBUG_BUILD` says
+which you have. On one machine, 10M rows of a four-column STRICT table:
+
+| | seconds | peak RSS |
+| --- | --- | --- |
+| sqlite_rs | 0.95 | 0.47 GB |
+| adbc | 2.30 | 1.58 GB |
+| stdlib `fetchall()` | 4.44 | 2.30 GB |
+
+ADBC is the near neighbour -- Arrow out of its own bundled SQLite -- and is
+given a batch size worth having rather than its 1024-row default. stdlib is
+let off lightest of the three: `fetchall()` is where it stops, so it is not
+charged for arranging its rows into anything.
 
 `bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
 resolve the vendored CPython headers in `native/`.

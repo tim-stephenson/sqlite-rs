@@ -37,6 +37,10 @@ test = [
 # matrix the way pyarrow once did.
 bench = [
     "polars",
+    # ADBC's SQLite driver is the near neighbour: it returns Arrow too, from
+    # its own bundled SQLite. Its dbapi layer goes through pyarrow.
+    "adbc-driver-sqlite",
+    "pyarrow",
 ]
 dev = [
     "maturin",
@@ -117,7 +121,12 @@ include = [
 # pytest puts the test directory on sys.path, so a test importing a sibling
 # helper (arrow_util) is a plain top-level import at runtime. Tell basedpyright
 # the same, rather than have it read those as implicitly relative.
-executionEnvironments = [{ root = "tests", extraPaths = ["tests"] }]
+# adbc_driver_sqlite ships no types, so every call through it in the benchmark
+# reads as partially unknown. Nothing in scripts/ is imported by the package.
+executionEnvironments = [
+    { root = "tests", extraPaths = ["tests"] },
+    { root = "scripts", reportUnknownMemberType = false, reportUnknownArgumentType = false, reportUnknownVariableType = false },
+]
 exclude = [
     "**/node_modules", 
     "**/__pycache__",

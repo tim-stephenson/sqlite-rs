@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Compare sqlite_rs.execute_and_fetch_all against stdlib sqlite3 fetchall().
+"""Compare sqlite_rs against stdlib sqlite3 and ADBC, reading a whole table.
 
-Both read an entire on-disk table. sqlite_rs goes all the way to a polars
-DataFrame, handing polars one Arrow array per column over the PyCapsule
-interface, so the data never becomes Python objects. stdlib sqlite3 stops at
-fetchall(), which is already a tuple per row and a Python object per cell; it
-is not charged for arranging those into anything.
+sqlite_rs goes all the way to a polars DataFrame, handing polars one Arrow
+array per column over the PyCapsule interface, so the data never becomes
+Python objects. ADBC is the near neighbour -- its SQLite driver also returns
+Arrow, through its own bundled SQLite and its own connection -- and is taken
+to a DataFrame the same way. stdlib sqlite3 stops at fetchall(), which is
+already a tuple per row and a Python object per cell; it is not charged for
+arranging those into anything.
 
 Usage:
     python scripts/benchmark_fetch_all.py                  # 100M rows, both modes
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import importlib
 import json
 import resource
 import sqlite3
@@ -125,9 +128,9 @@ def build(db: Path, rows: int) -> None:
 
 
 def fetch_via_sqlite_rs(db: Path) -> tuple[int, int]:
-    # Imported here, not at module scope: only the child process doing this
-    # mode should pay for polars, and its import must not land inside the
-    # timed section either.
+    # Imported here, not at module scope, so only the child process doing this
+    # mode pays for polars at all. IMPORTS above has already loaded it by the
+    # time this runs, so the cost does not land inside the timed section.
     import polars as pl  # noqa: PLC0415
     import sqlite_rs  # noqa: PLC0415
     import sqlite_rs.sqlite3  # noqa: PLC0415
@@ -140,15 +143,47 @@ def fetch_via_sqlite_rs(db: Path) -> tuple[int, int]:
     return frame.height, frame.width
 
 
+def fetch_via_adbc(db: Path) -> tuple[int, int]:
+    import polars as pl  # noqa: PLC0415
+    from adbc_driver_sqlite import StatementOptions  # noqa: PLC0415
+    from adbc_driver_sqlite import dbapi as adbc  # noqa: PLC0415
+
+    with adbc.connect(str(db)) as conn, conn.cursor() as cursor:
+        # The driver's default is 1024 rows a batch, which leaves polars
+        # stitching ten thousand chunks together afterwards. Raising it is
+        # what a user reading this table would do, so the comparison does too.
+        batch = {StatementOptions.BATCH_ROWS.value: "65536"}
+        cursor.adbc_statement.set_options(**batch)
+        _ = cursor.execute("SELECT i, r, s, b FROM t")
+        frame = pl.DataFrame(cursor.fetch_arrow_table())
+    return frame.height, frame.width
+
+
 def fetch_via_stdlib(db: Path) -> tuple[int, int]:
     cursor = sqlite3.connect(db).execute("SELECT i, r, s, b FROM t")
     rows = cursor.fetchall()
     return len(rows), len(COLUMNS)
 
 
+FETCH = {
+    "sqlite_rs": fetch_via_sqlite_rs,
+    "adbc": fetch_via_adbc,
+    "stdlib": fetch_via_stdlib,
+}
+# Imported before the clock starts. polars alone is a few hundred milliseconds
+# and pyarrow more, which is a large share of what is being measured.
+IMPORTS = {
+    "sqlite_rs": ("polars", "sqlite_rs", "sqlite_rs.sqlite3"),
+    "adbc": ("polars", "adbc_driver_sqlite", "adbc_driver_sqlite.dbapi"),
+    "stdlib": (),
+}
+
+
 def run_child(mode: str, db: Path) -> None:
     """Time one mode and report it as JSON on stdout."""
-    fetch = fetch_via_sqlite_rs if mode == "sqlite_rs" else fetch_via_stdlib
+    fetch = FETCH[mode]
+    for module in IMPORTS[mode]:
+        _ = importlib.import_module(module)
     started = time.perf_counter()
     try:
         height, _ = fetch(db)
@@ -211,20 +246,22 @@ def report(results: list[Result], rows: int) -> None:
             print(f"  {result.mode:<12} {row}")
 
     done = {r.mode: r for r in results if not r.error}
-    if {"sqlite_rs", "stdlib"} <= done.keys():
-        ours, theirs = done["sqlite_rs"], done["stdlib"]
-        faster = theirs.seconds / ours.seconds
-        leaner = theirs.peak_rss / ours.peak_rss
-        print(f"\n  sqlite_rs: {faster:.1f}x faster, {leaner:.1f}x less memory")
+    ours = done.get("sqlite_rs")
+    if ours is None:
+        return
+    for mode, other in done.items():
+        if mode == "sqlite_rs":
+            continue
+        faster = other.seconds / ours.seconds
+        leaner = other.peak_rss / ours.peak_rss
+        print(f"\n  vs {mode}: {faster:.1f}x faster, {leaner:.1f}x less memory")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--rows", type=int, default=100_000_000)
     _ = parser.add_argument("--db", type=Path, default=Path("bench.db"))
-    _ = parser.add_argument(
-        "--mode", choices=["both", "sqlite_rs", "stdlib"], default="both"
-    )
+    _ = parser.add_argument("--mode", choices=["all", *FETCH], default="all")
     _ = parser.add_argument(
         "--rebuild", action="store_true", help="rebuild even if the db exists"
     )
@@ -249,7 +286,7 @@ def main() -> None:
     else:
         print(f"  reusing {db} ({db.stat().st_size / 1e9:.2f} GB); --rebuild to redo")
 
-    modes = ["sqlite_rs", "stdlib"] if mode == "both" else [mode]
+    modes = list(FETCH) if mode == "all" else [mode]
     if "sqlite_rs" in modes:
         require_release_build()
     report([run_mode(m, db) for m in modes], rows)
