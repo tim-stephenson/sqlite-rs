@@ -17,6 +17,11 @@ Usage:
 The table is STRICT, so every column holds exactly one storage class and
 sqlite_rs's type promotion never fires -- the case worth measuring.
 
+Every mode starts warm: the database is read once before any of them run, the
+modules a mode needs are imported before its clock starts, and it fetches
+WARMUP_ROWS rows through its own path first. What is left on the clock is the
+work, not the first-time cost of getting to it.
+
 Each mode runs in its own subprocess, so peak memory is attributed to one mode
 and an out-of-memory in one does not take the other down with it. At 100M rows
 the stdlib path needs tens of gigabytes; being unable to finish is itself a
@@ -73,6 +78,10 @@ SELECT
 FROM seq
 """
 COLUMNS = ("i", "r", "s", "b")
+SELECT = "SELECT i, r, s, b FROM t"
+# Enough rows for a warmup to touch every branch of a mode's path and settle
+# its allocator, and few enough to cost nothing next to the run being timed.
+WARMUP_ROWS = 50_000
 
 
 @dataclasses.dataclass(frozen=True)
@@ -127,7 +136,7 @@ def build(db: Path, rows: int) -> None:
     print(f"\r  built {rows:,} rows, {size / 1e9:.2f} GB on disk{' ' * 20}")
 
 
-def fetch_via_sqlite_rs(db: Path) -> tuple[int, int]:
+def fetch_via_sqlite_rs(db: Path, sql: str) -> tuple[int, int]:
     # Imported here, not at module scope, so only the child process doing this
     # mode pays for polars at all. IMPORTS above has already loaded it by the
     # time this runs, so the cost does not land inside the timed section.
@@ -136,14 +145,14 @@ def fetch_via_sqlite_rs(db: Path) -> tuple[int, int]:
     import sqlite_rs.sqlite3  # noqa: PLC0415
 
     conn = sqlite_rs.sqlite3.connect(str(db))
-    columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT i, r, s, b FROM t")
+    columns = sqlite_rs.execute_and_fetch_all(conn, sql)
     # Each array's name rides along in its exported Arrow schema, so polars
     # names the Series itself.
     frame = pl.DataFrame([pl.Series(c) for c in columns])
     return frame.height, frame.width
 
 
-def fetch_via_adbc(db: Path) -> tuple[int, int]:
+def fetch_via_adbc(db: Path, sql: str) -> tuple[int, int]:
     import polars as pl  # noqa: PLC0415
     from adbc_driver_sqlite import StatementOptions  # noqa: PLC0415
     from adbc_driver_sqlite import dbapi as adbc  # noqa: PLC0415
@@ -154,13 +163,13 @@ def fetch_via_adbc(db: Path) -> tuple[int, int]:
         # what a user reading this table would do, so the comparison does too.
         batch = {StatementOptions.BATCH_ROWS.value: "65536"}
         cursor.adbc_statement.set_options(**batch)
-        _ = cursor.execute("SELECT i, r, s, b FROM t")
+        _ = cursor.execute(sql)
         frame = pl.DataFrame(cursor.fetch_arrow_table())
     return frame.height, frame.width
 
 
-def fetch_via_stdlib(db: Path) -> tuple[int, int]:
-    cursor = sqlite3.connect(db).execute("SELECT i, r, s, b FROM t")
+def fetch_via_stdlib(db: Path, sql: str) -> tuple[int, int]:
+    cursor = sqlite3.connect(db).execute(sql)
     rows = cursor.fetchall()
     return len(rows), len(COLUMNS)
 
@@ -184,9 +193,13 @@ def run_child(mode: str, db: Path) -> None:
     fetch = FETCH[mode]
     for module in IMPORTS[mode]:
         _ = importlib.import_module(module)
+    # The same path, on a slice of the same table, before anything is timed:
+    # whatever a library defers to its first call, whatever the allocator has
+    # to ask the kernel for, and the page cache for the start of the file.
+    _ = fetch(db, f"{SELECT} LIMIT {WARMUP_ROWS}")
     started = time.perf_counter()
     try:
-        height, _ = fetch(db)
+        height, _ = fetch(db, SELECT)
     except MemoryError:
         print(json.dumps(dataclasses.asdict(Result(mode=mode, error="MemoryError"))))
         return
@@ -207,6 +220,18 @@ def require_release_build() -> None:
         cost = "sqlite_rs was built without optimization: roughly 3x slower here."
         fix = "uv run maturin develop --uv --release"
         sys.exit(f"{cost}\n  Rebuild with: {fix}")
+
+
+def warm_page_cache(db: Path) -> None:
+    """Read the database once, so no mode pays for a cold file.
+
+    Modes run in sequence, so without this the first one reads from disk and
+    the rest from the page cache -- worth seconds on a file this size, and
+    worth all of the difference between two modes that are otherwise close.
+    """
+    with db.open("rb") as handle:
+        while handle.read(1 << 24):
+            pass
 
 
 def run_mode(mode: str, db: Path) -> Result:
@@ -289,6 +314,7 @@ def main() -> None:
     modes = list(FETCH) if mode == "all" else [mode]
     if "sqlite_rs" in modes:
         require_release_build()
+    warm_page_cache(db)
     report([run_mode(m, db) for m in modes], rows)
 
     if not cast("bool", args.keep):

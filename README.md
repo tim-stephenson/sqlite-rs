@@ -145,9 +145,14 @@ which you have. On one machine, 10M rows of a four-column STRICT table:
 
 | | seconds | peak RSS |
 | --- | --- | --- |
-| sqlite_rs | 0.95 | 0.47 GB |
-| adbc | 2.30 | 1.58 GB |
-| stdlib `fetchall()` | 4.44 | 2.30 GB |
+| sqlite_rs | 0.94 | 0.48 GB |
+| adbc | 2.23 | 1.58 GB |
+| stdlib `fetchall()` | 4.28 | 2.56 GB |
+
+Every mode starts warm -- the file is read once before any of them run, their
+modules are imported before their clock starts, and each fetches 50k rows
+through its own path first -- so the first two repeat to within a percent or
+two. stdlib swings around 10% whatever you do, which is its allocator.
 
 ADBC is the near neighbour -- Arrow out of its own bundled SQLite -- and is
 given a batch size worth having rather than its 1024-row default. stdlib is
