@@ -90,6 +90,10 @@ class Result:
 
     mode: str
     seconds: float = 0.0
+    # Of `seconds`, the part spent getting the data out of SQLite, before any
+    # of it is handed to polars. Which side of that line a platform loses time
+    # on is the first question worth asking about a slow one.
+    read_seconds: float = 0.0
     rows: int = 0
     peak_rss: int = 0
     error: str | None = None
@@ -101,6 +105,7 @@ class Result:
         return cls(
             mode=str(raw["mode"]),
             seconds=float(cast("float", raw.get("seconds", 0.0))),
+            read_seconds=float(cast("float", raw.get("read_seconds", 0.0))),
             rows=int(cast("int", raw.get("rows", 0))),
             peak_rss=int(cast("int", raw.get("peak_rss", 0))),
             error=cast("str | None", raw.get("error")),
@@ -179,7 +184,7 @@ def build(db: Path, rows: int) -> None:
     print(f"\r  built {rows:,} rows, {size / 1e9:.2f} GB on disk{' ' * 20}")
 
 
-def fetch_via_sqlite_rs(db: Path, sql: str) -> tuple[int, int]:
+def fetch_via_sqlite_rs(db: Path, sql: str) -> tuple[int, float]:
     # Imported here, not at module scope, so only the child process doing this
     # mode pays for polars at all. IMPORTS above has already loaded it by the
     # time this runs, so the cost does not land inside the timed section.
@@ -188,14 +193,16 @@ def fetch_via_sqlite_rs(db: Path, sql: str) -> tuple[int, int]:
     import sqlite_rs.sqlite3  # noqa: PLC0415
 
     conn = sqlite_rs.sqlite3.connect(str(db))
+    started = time.perf_counter()
     columns = sqlite_rs.execute_and_fetch_all(conn, sql)
+    read = time.perf_counter() - started
     # Each array's name rides along in its exported Arrow schema, so polars
     # names the Series itself.
     frame = pl.DataFrame([pl.Series(c) for c in columns])
-    return frame.height, frame.width
+    return frame.height, read
 
 
-def fetch_via_adbc(db: Path, sql: str) -> tuple[int, int]:
+def fetch_via_adbc(db: Path, sql: str) -> tuple[int, float]:
     import polars as pl  # noqa: PLC0415
     from adbc_driver_sqlite import StatementOptions  # noqa: PLC0415
     from adbc_driver_sqlite import dbapi as adbc  # noqa: PLC0415
@@ -206,15 +213,20 @@ def fetch_via_adbc(db: Path, sql: str) -> tuple[int, int]:
         # what a user reading this table would do, so the comparison does too.
         batch = {StatementOptions.BATCH_ROWS.value: "65536"}
         cursor.adbc_statement.set_options(**batch)
+        started = time.perf_counter()
         _ = cursor.execute(sql)
-        frame = pl.DataFrame(cursor.fetch_arrow_table())
-    return frame.height, frame.width
+        table = cursor.fetch_arrow_table()
+        read = time.perf_counter() - started
+        frame = pl.DataFrame(table)
+    return frame.height, read
 
 
-def fetch_via_stdlib(db: Path, sql: str) -> tuple[int, int]:
+def fetch_via_stdlib(db: Path, sql: str) -> tuple[int, float]:
+    started = time.perf_counter()
     cursor = sqlite3.connect(db).execute(sql)
     rows = cursor.fetchall()
-    return len(rows), len(COLUMNS)
+    # All of it: fetchall() is where this mode stops.
+    return len(rows), time.perf_counter() - started
 
 
 FETCH = {
@@ -242,13 +254,14 @@ def run_child(mode: str, db: Path) -> None:
     _ = fetch(db, f"{SELECT} LIMIT {WARMUP_ROWS}")
     started = time.perf_counter()
     try:
-        height, _ = fetch(db, SELECT)
+        height, read = fetch(db, SELECT)
     except MemoryError:
         print(json.dumps(dataclasses.asdict(Result(mode=mode, error="MemoryError"))))
         return
     result = Result(
         mode=mode,
         seconds=time.perf_counter() - started,
+        read_seconds=read,
         rows=height,
         peak_rss=peak_rss_bytes(),
     )
@@ -302,15 +315,19 @@ def run_mode(mode: str, db: Path) -> Result:
 
 
 def report(results: list[Result], rows: int) -> None:
-    print(f"\n  {'mode':<12} {'seconds':>9} {'rows/s':>14} {'peak RSS':>11}")
-    print(f"  {'-' * 12} {'-' * 9} {'-' * 14} {'-' * 11}")
+    header = f"{'seconds':>9} {'read':>8} {'rows/s':>14} {'peak RSS':>11}"
+    print(f"\n  {'mode':<12} {header}")
+    print(f"  {'-' * 12} {'-' * 9} {'-' * 8} {'-' * 14} {'-' * 11}")
     for result in results:
         if result.error:
             print(f"  {result.mode:<12} {result.error:>9}")
         else:
             rate = rows / result.seconds
             peak = result.peak_rss / 1e9
-            row = f"{result.seconds:>9.2f} {rate:>14,.0f} {peak:>8.2f} GB"
+            row = (
+                f"{result.seconds:>9.2f} {result.read_seconds:>8.2f} "
+                f"{rate:>14,.0f} {peak:>8.2f} GB"
+            )
             print(f"  {result.mode:<12} {row}")
 
     done = {r.mode: r for r in results if not r.error}
