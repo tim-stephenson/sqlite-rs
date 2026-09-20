@@ -7,6 +7,8 @@
 /// the bundled `libsqlite_rs_sqlite3` built by build.rs -- see
 /// .cargo/config.toml for how that name is forced past libsqlite3-sys's
 /// hardcoded `sqlite3`.
+mod columns;
+
 mod shim {
     use pyo3::ffi as pyffi;
     use rusqlite::ffi;
@@ -25,12 +27,13 @@ mod shim {
 #[pyo3::pymodule]
 mod _core {
     use super::shim;
-    use pyo3::conversion::IntoPyObjectExt;
+    use super::columns::{Cell, ColumnBuilder};
     use pyo3::exceptions::{PyTypeError, PyValueError};
     use pyo3::prelude::*;
-    use pyo3::types::PyBytes;
+    use pyo3_arrow::PyArray;
     use rusqlite::ffi;
     use rusqlite::types::ValueRef;
+    use std::sync::Arc;
 
     /// Run `sql` against the sqlite3* backing `connection`, and return the
     /// result rows. `connection` must be a Connection object created by
@@ -41,8 +44,8 @@ mod _core {
     /// the same `libsqlite3`), not just built from source-identical but
     /// independent copies.
     #[pyfunction]
-    fn execute_and_fetch_all(py: Python<'_>, connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-        run_query(py, connection_db(py, &connection)?, sql)
+    fn execute_and_fetch_all(connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
+        run_query(connection_db(&connection)?, sql)
     }
 
     /// Return the raw `sqlite3*` backing `connection` as a `ctypes.c_void_p`,
@@ -52,7 +55,7 @@ mod _core {
     /// `connection` requirement as `execute_and_fetch_all` above.
     #[pyfunction]
     fn get_raw_db_ptr(py: Python<'_>, connection: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        c_void_p(py, connection_db(py, &connection)? as usize)
+        c_void_p(py, connection_db(&connection)? as usize)
     }
 
     /// Run `sql` against the raw `sqlite3*` at `db_ptr` (as returned by, for
@@ -64,8 +67,8 @@ mod _core {
     /// functions above, there's no type to check here -- an arbitrary raw
     /// pointer is trusted as-is, per its documented contract.
     #[pyfunction]
-    fn execute_and_fetch_all_via_raw_pointer(py: Python<'_>, db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-        run_query(py, raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)
+    fn execute_and_fetch_all_via_raw_pointer(db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
+        run_query(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)
     }
 
     /// Return the raw `sqlite3_stmt*` backing `cursor` as a
@@ -89,9 +92,9 @@ mod _core {
     /// That shared state is the point -- it is the cursor-level equivalent
     /// of two consumers sharing one live connection.
     #[pyfunction]
-    fn fetch_all(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+    fn fetch_all(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Vec<PyArray>> {
         let stmt = cursor_stmt(py, &cursor)?;
-        let rows = collect_rows(py, stmt);
+        let rows = collect_rows(stmt);
         // Unconditionally, including on error: a drained statement left in
         // place would abort the interpreter on the cursor's next use.
         unsafe { shim::sqlite_rs_cursor_release_stmt(cursor.as_ptr()) };
@@ -109,8 +112,8 @@ mod _core {
     /// behind its back (see `fetch_all`). Prefer `fetch_all(cursor)`, which
     /// leaves the cursor correctly exhausted.
     #[pyfunction]
-    fn fetch_all_via_raw_pointer(py: Python<'_>, stmt_ptr: Bound<'_, PyAny>) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-        collect_rows(py, raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)
+    fn fetch_all_via_raw_pointer(stmt_ptr: Bound<'_, PyAny>) -> PyResult<Vec<PyArray>> {
+        collect_rows(raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)
     }
 
     /// Borrow `db` as a rusqlite `Connection` and run `sql` through it.
@@ -118,21 +121,42 @@ mod _core {
     /// `from_handle` borrows rather than owns: the returned Connection does
     /// not close the database when dropped, which is essential here because
     /// the handle belongs to the Python Connection object.
-    fn run_query(py: Python<'_>, db: *mut ffi::sqlite3, sql: &str) -> PyResult<Vec<Vec<Py<PyAny>>>> {
+    fn run_query(db: *mut ffi::sqlite3, sql: &str) -> PyResult<Vec<PyArray>> {
         let conn = unsafe { rusqlite::Connection::from_handle(db) }.map_err(sqlite_err)?;
         let mut stmt = conn.prepare(sql).map_err(sqlite_err)?;
-        let columns = stmt.column_count();
-        let mut rows = stmt.query([]).map_err(sqlite_err)?;
+        let names: Vec<String> = stmt.column_names().into_iter().map(str::to_owned).collect();
+        let mut builders: Vec<ColumnBuilder> = (0..names.len()).map(|_| ColumnBuilder::default()).collect();
 
-        let mut out = Vec::new();
+        let mut rows = stmt.query([]).map_err(sqlite_err)?;
         while let Some(row) = rows.next().map_err(sqlite_err)? {
-            let mut values = Vec::with_capacity(columns);
-            for i in 0..columns {
-                values.push(to_py(py, row.get_ref(i).map_err(sqlite_err)?)?);
+            for (i, builder) in builders.iter_mut().enumerate() {
+                builder.push(cell_of(row.get_ref(i).map_err(sqlite_err)?));
             }
-            out.push(values);
         }
-        Ok(out)
+        Ok(finish(builders, &names))
+    }
+
+    fn cell_of(value: ValueRef<'_>) -> Cell<'_> {
+        match value {
+            ValueRef::Null => Cell::Null,
+            ValueRef::Integer(v) => Cell::Int(v),
+            ValueRef::Real(v) => Cell::Real(v),
+            // SQLite does not guarantee TEXT is valid UTF-8; the lossy path
+            // below is only reachable for deliberately malformed data.
+            ValueRef::Text(v) => std::str::from_utf8(v).map_or(Cell::Blob(v), Cell::Text),
+            ValueRef::Blob(v) => Cell::Blob(v),
+        }
+    }
+
+    fn finish(builders: Vec<ColumnBuilder>, names: &[String]) -> Vec<PyArray> {
+        builders
+            .into_iter()
+            .zip(names)
+            .map(|(builder, name)| {
+                let (array, field) = builder.finish(name);
+                PyArray::new(array, Arc::new(field))
+            })
+            .collect()
     }
 
     /// Step an already-prepared statement to exhaustion and decode its rows.
@@ -142,18 +166,30 @@ mod _core {
     /// Raw `ffi` rather than rusqlite, because rusqlite offers no way to
     /// borrow an existing `sqlite3_stmt*` the way `Connection::from_handle`
     /// borrows a `sqlite3*`.
-    fn collect_rows(py: Python<'_>, stmt: *mut ffi::sqlite3_stmt) -> PyResult<Vec<Vec<Py<PyAny>>>> {
-        let mut rows = Vec::new();
+    fn collect_rows(stmt: *mut ffi::sqlite3_stmt) -> PyResult<Vec<PyArray>> {
+        let ncols = unsafe { ffi::sqlite3_column_count(stmt) };
+        let names: Vec<String> = (0..ncols)
+            .map(|i| unsafe {
+                let ptr = ffi::sqlite3_column_name(stmt, i);
+                if ptr.is_null() {
+                    format!("column{i}")
+                } else {
+                    std::ffi::CStr::from_ptr(ptr).to_string_lossy().into_owned()
+                }
+            })
+            .collect();
+        let mut builders: Vec<ColumnBuilder> = (0..ncols).map(|_| ColumnBuilder::default()).collect();
+
         // A DB-API cursor's statement is already positioned on a row, because
         // execute() steps once; a freshly prepared one is not. Stepping first
         // in the former case would silently drop the first row.
         if unsafe { ffi::sqlite3_data_count(stmt) } > 0 {
-            rows.push(read_row(py, stmt)?);
+            read_row(stmt, &mut builders);
         }
         loop {
             match unsafe { ffi::sqlite3_step(stmt) } {
-                ffi::SQLITE_ROW => rows.push(read_row(py, stmt)?),
-                ffi::SQLITE_DONE => return Ok(rows),
+                ffi::SQLITE_ROW => read_row(stmt, &mut builders),
+                ffi::SQLITE_DONE => return Ok(finish(builders, &names)),
                 rc => {
                     let db = unsafe { ffi::sqlite3_db_handle(stmt) };
                     let msg = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_errmsg(db)) };
@@ -166,31 +202,26 @@ mod _core {
         }
     }
 
-    fn read_row(py: Python<'_>, stmt: *mut ffi::sqlite3_stmt) -> PyResult<Vec<Py<PyAny>>> {
-        let columns = unsafe { ffi::sqlite3_column_count(stmt) };
-        let mut row = Vec::with_capacity(columns as usize);
-        for i in 0..columns {
-            // rusqlite has no public way to build a ValueRef from a borrowed
-            // statement, so read the column and hand the same ValueRef shape
-            // to `to_py` -- one decoder for both paths.
-            let value = unsafe {
+    fn read_row(stmt: *mut ffi::sqlite3_stmt, builders: &mut [ColumnBuilder]) {
+        for (i, builder) in builders.iter_mut().enumerate() {
+            let i = i as i32;
+            let cell = unsafe {
                 match ffi::sqlite3_column_type(stmt, i) {
-                    ffi::SQLITE_INTEGER => ValueRef::Integer(ffi::sqlite3_column_int64(stmt, i)),
-                    ffi::SQLITE_FLOAT => ValueRef::Real(ffi::sqlite3_column_double(stmt, i)),
-                    ffi::SQLITE_TEXT => ValueRef::Text(column_slice(
-                        ffi::sqlite3_column_text(stmt, i),
-                        ffi::sqlite3_column_bytes(stmt, i),
-                    )),
-                    ffi::SQLITE_BLOB => ValueRef::Blob(column_slice(
+                    ffi::SQLITE_INTEGER => Cell::Int(ffi::sqlite3_column_int64(stmt, i)),
+                    ffi::SQLITE_FLOAT => Cell::Real(ffi::sqlite3_column_double(stmt, i)),
+                    ffi::SQLITE_TEXT => {
+                        let bytes = column_slice(ffi::sqlite3_column_text(stmt, i), ffi::sqlite3_column_bytes(stmt, i));
+                        std::str::from_utf8(bytes).map_or(Cell::Blob(bytes), Cell::Text)
+                    }
+                    ffi::SQLITE_BLOB => Cell::Blob(column_slice(
                         ffi::sqlite3_column_blob(stmt, i).cast::<u8>(),
                         ffi::sqlite3_column_bytes(stmt, i),
                     )),
-                    _ => ValueRef::Null,
+                    _ => Cell::Null,
                 }
             };
-            row.push(to_py(py, value)?);
+            builder.push(cell);
         }
-        Ok(row)
     }
 
     /// SQLite returns a null pointer for a zero-length text/blob, which
@@ -200,18 +231,6 @@ mod _core {
             &[]
         } else {
             unsafe { std::slice::from_raw_parts(ptr, len as usize) }
-        }
-    }
-
-    /// One conversion for both paths, so a cursor and a connection decode a
-    /// column identically.
-    fn to_py(py: Python<'_>, value: ValueRef<'_>) -> PyResult<Py<PyAny>> {
-        match value {
-            ValueRef::Null => Ok(py.None()),
-            ValueRef::Integer(i) => i.into_py_any(py),
-            ValueRef::Real(f) => f.into_py_any(py),
-            ValueRef::Text(s) => String::from_utf8_lossy(s).into_owned().into_py_any(py),
-            ValueRef::Blob(b) => PyBytes::new(py, b).into_py_any(py),
         }
     }
 
@@ -270,7 +289,8 @@ mod _core {
         }
     }
 
-    fn connection_db(py: Python<'_>, connection: &Bound<'_, PyAny>) -> PyResult<*mut ffi::sqlite3> {
+    fn connection_db(connection: &Bound<'_, PyAny>) -> PyResult<*mut ffi::sqlite3> {
+        let py = connection.py();
         require_own(py, connection, "Connection", "sqlite_rs.sqlite3.connect()")?;
         let db = unsafe { shim::sqlite_rs_get_connection_db(connection.as_ptr()) };
         if db.is_null() {

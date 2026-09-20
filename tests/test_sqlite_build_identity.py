@@ -15,6 +15,7 @@ loaded-path check passing.
 
 import ctypes
 
+import arrow_util as au
 import sqlite_rs
 import sqlite_rs.sqlite3
 
@@ -41,12 +42,16 @@ def _clone_module_facts() -> tuple[str, str, set[str]]:
 
 def _core_facts() -> tuple[str, str, set[str]]:
     conn = sqlite_rs.sqlite3.connect(":memory:")
-    [[version, source_id]] = sqlite_rs.execute_and_fetch_all(
-        conn, "SELECT sqlite_version(), sqlite_source_id()"
+    [[version, source_id]] = au.rows(
+        sqlite_rs.execute_and_fetch_all(
+            conn, "SELECT sqlite_version(), sqlite_source_id()"
+        )
     )
     options = {
         str(row[0])
-        for row in sqlite_rs.execute_and_fetch_all(conn, "PRAGMA compile_options")
+        for row in au.rows(
+            sqlite_rs.execute_and_fetch_all(conn, "PRAGMA compile_options")
+        )
     }
     conn.close()
     return str(version), str(source_id), options

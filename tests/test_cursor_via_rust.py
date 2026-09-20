@@ -10,6 +10,7 @@ import ctypes
 import sqlite3
 from pathlib import Path
 
+import arrow_util as au
 import pytest
 import sqlite_rs
 import sqlite_rs.sqlite3
@@ -58,7 +59,7 @@ def test_fetch_all_returns_every_row() -> None:
     # steps before reading would silently drop it.
     cur = _conn().execute("SELECT * FROM t")
 
-    assert sqlite_rs.fetch_all(cur) == [[1, "x"], [2, "y"], [3, "z"]]
+    assert au.rows(sqlite_rs.fetch_all(cur)) == [[1, "x"], [2, "y"], [3, "z"]]
 
 
 def test_fetch_all_decodes_column_types_like_execute_and_fetch_all() -> None:
@@ -68,8 +69,11 @@ def test_fetch_all_decodes_column_types_like_execute_and_fetch_all() -> None:
 
     via_cursor = sqlite_rs.fetch_all(conn.execute("SELECT * FROM v"))
 
-    assert via_cursor == [[7, 1.5, "txt", None]]
-    assert via_cursor == sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM v")
+    assert au.rows(via_cursor) == [[7, 1.5, "txt", None]]
+    assert au.rows(via_cursor) == au.rows(
+        sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM v")
+    )
+    assert [au.dtype(c) for c in via_cursor] == ["int64", "float64", "utf8", "null"]
 
 
 def test_fetch_all_round_trips_a_blob() -> None:
@@ -77,7 +81,9 @@ def test_fetch_all_round_trips_a_blob() -> None:
     _ = conn.execute("CREATE TABLE b (data BLOB)")
     _ = conn.execute("INSERT INTO b VALUES (?)", (b"\x00\xff",))
 
-    assert sqlite_rs.fetch_all(conn.execute("SELECT data FROM b")) == [[b"\x00\xff"]]
+    assert au.rows(sqlite_rs.fetch_all(conn.execute("SELECT data FROM b"))) == [
+        [b"\x00\xff"]
+    ]
 
 
 def test_fetch_all_leaves_the_cursor_safely_exhausted() -> None:
@@ -100,7 +106,7 @@ def test_fetch_all_resumes_from_the_cursor_position() -> None:
     cur = _conn().execute("SELECT a FROM t")
 
     assert cur.fetchone() == (1,)
-    assert sqlite_rs.fetch_all(cur) == [[2], [3]]
+    assert au.rows(sqlite_rs.fetch_all(cur)) == [[2], [3]]
 
 
 def test_fetch_all_on_an_exhausted_cursor_reports_no_statement() -> None:
@@ -131,7 +137,7 @@ def test_fetch_all_via_raw_pointer_drives_a_cursors_statement() -> None:
     ptr = sqlite_rs.get_raw_stmt_ptr(cur).value
     assert ptr is not None
 
-    assert sqlite_rs.fetch_all_via_raw_pointer(ptr) == [[2], [3]]
+    assert au.rows(sqlite_rs.fetch_all_via_raw_pointer(ptr)) == [[2], [3]]
 
     _ = sqlite_rs.fetch_all(cur)  # release; see the docstring's warning
 
@@ -162,7 +168,7 @@ def test_fetch_all_via_raw_pointer_drives_a_ctypes_prepared_statement(
     )
     assert stmt.value is not None
 
-    assert sqlite_rs.fetch_all_via_raw_pointer(stmt.value) == [[10], [20]]
+    assert au.rows(sqlite_rs.fetch_all_via_raw_pointer(stmt.value)) == [[10], [20]]
 
     libsqlite3.sqlite3_finalize(stmt)
     libsqlite3.sqlite3_close(db)
@@ -189,10 +195,9 @@ def test_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
     # The c_void_p from get_raw_stmt_ptr goes straight back in, without .value.
     cur = _conn().execute("SELECT a FROM t WHERE a > 1")
 
-    assert sqlite_rs.fetch_all_via_raw_pointer(sqlite_rs.get_raw_stmt_ptr(cur)) == [
-        [2],
-        [3],
-    ]
+    assert au.rows(
+        sqlite_rs.fetch_all_via_raw_pointer(sqlite_rs.get_raw_stmt_ptr(cur))
+    ) == [[2], [3]]
 
     _ = sqlite_rs.fetch_all(cur)  # release; see the docstring's warning
 

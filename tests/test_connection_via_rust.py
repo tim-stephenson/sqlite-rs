@@ -9,6 +9,7 @@ import ctypes
 import sqlite3
 from pathlib import Path
 
+import arrow_util as au
 import pytest
 import sqlite_rs
 import sqlite_rs.sqlite3
@@ -29,9 +30,11 @@ def test_execute_and_fetch_all_reads_rows_written_via_the_clone_module() -> None
     _ = conn.execute("INSERT INTO t VALUES (1, ?, 3.5)", ("hello",))
     conn.commit()
 
-    assert sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t") == [
-        [1, "hello", 3.5]
-    ]
+    columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")
+
+    assert au.rows(columns) == [[1, "hello", 3.5]]
+    assert [au.name(c) for c in columns] == ["a", "b", "c"]
+    assert [au.dtype(c) for c in columns] == ["int64", "utf8", "float64"]
 
 
 def test_execute_and_fetch_all_writes_are_visible_via_the_clone_module() -> None:
@@ -73,7 +76,7 @@ def test_rust_side_uses_the_same_sqlite_build_as_the_clone_module() -> None:
 
     via_rust = sqlite_rs.execute_and_fetch_all(conn, "SELECT sqlite_version()")
 
-    assert via_rust == [[sqlite_rs.sqlite3.sqlite_version]]
+    assert au.rows(via_rust) == [[sqlite_rs.sqlite3.sqlite_version]]
 
 
 def test_execute_and_fetch_all_round_trips_a_blob() -> None:
@@ -84,7 +87,10 @@ def test_execute_and_fetch_all_round_trips_a_blob() -> None:
     blob = b"\x00\x01\xfe\xff"
     _ = conn.execute("INSERT INTO b VALUES (?)", (blob,))
 
-    assert sqlite_rs.execute_and_fetch_all(conn, "SELECT data FROM b") == [[blob]]
+    columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT data FROM b")
+
+    assert au.rows(columns) == [[blob]]
+    assert au.dtype(columns[0]) == "binary"
 
 
 def test_execute_and_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
@@ -96,11 +102,11 @@ def test_execute_and_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> Non
     ptr = sqlite_rs.get_raw_db_ptr(conn)
     assert ptr.value is not None  # c_void_p.value is int | None
 
-    assert sqlite_rs.execute_and_fetch_all_via_raw_pointer(ptr, "SELECT a FROM t") == [
-        [9]
-    ]
-    assert sqlite_rs.execute_and_fetch_all_via_raw_pointer(
-        ptr.value, "SELECT a FROM t"
+    assert au.rows(
+        sqlite_rs.execute_and_fetch_all_via_raw_pointer(ptr, "SELECT a FROM t")
+    ) == [[9]]
+    assert au.rows(
+        sqlite_rs.execute_and_fetch_all_via_raw_pointer(ptr.value, "SELECT a FROM t")
     ) == [[9]]
 
 

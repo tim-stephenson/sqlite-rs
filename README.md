@@ -16,15 +16,37 @@ conn = sqlite_rs.sqlite3.connect(":memory:")  # exactly like stdlib sqlite3
 conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
 
 sqlite_rs.execute_and_fetch_all(conn, "INSERT INTO t VALUES (1, 'x')")
-sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")  # [[1, 'x']]
+
+# One Arrow array per column, each as long as the number of rows.
+a, b = sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")
+len(a), len(b)  # (1, 1)
+a.__arrow_c_array__()  # -> pyarrow.array(a), polars.from_arrow(a), ...
 
 cur = conn.execute("SELECT * FROM t")
 sqlite_rs.get_raw_stmt_ptr(cur)  # ctypes.c_void_p -> sqlite3_stmt*
-sqlite_rs.fetch_all(cur)  # [[1, 'x']] -- and leaves cur exhausted
+sqlite_rs.fetch_all(cur)  # same columns -- and leaves cur exhausted
 
 sqlite_rs.get_raw_db_ptr(conn)  # ctypes.c_void_p -> sqlite3*
 sqlite_rs.LIBSQLITE3_PATH  # the bundled library, for ctypes.CDLL
 ```
+
+Results are columnar. Each array exports `__arrow_c_array__` and
+`__arrow_c_schema__`, so pyarrow, polars and duckdb consume them without a
+copy -- and without sqlite_rs depending on any Arrow package itself.
+
+SQLite types values per row, not per column, so a column is accumulated into
+one contiguous typed buffer on the assumption the type it has been seeing is
+the type that will keep coming. A wider value promotes what has accumulated,
+once, along SQLite's own storage class order:
+
+```text
+NULL  <  INTEGER  <  REAL  <  TEXT  <  BLOB
+ null    int64       float64  utf8     binary
+```
+
+NULL never promotes anything, it only contributes a null slot; a column of
+nothing but NULLs stays Arrow `null`. Promotion is one-way, so a column is
+rebuilt at most four times however many rows it has.
 
 `execute_and_fetch_all_via_raw_pointer` and `fetch_all_via_raw_pointer` are the
 mirror image: they take a pointer an unrelated FFI caller already holds, so the

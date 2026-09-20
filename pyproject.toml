@@ -72,7 +72,7 @@ convention = "numpy"
 [tool.ruff.lint.extend-per-file-ignores]
 "docs/**/*.py" = ["INP001", "D103"]
 "docs/source/notebooks/*.py" = ["ANN001", "ANN202", "B018", "PLC0415", "PLR1711"]
-"tests/**/*.py" = ["S101", "D103", "INP001"]
+"tests/**/*.py" = ["S101", "D101", "D102", "D103", "D105", "INP001"]
 "scripts/**/*.py" = ["T201", "D103"]
 
 [tool.maturin]
@@ -108,6 +108,10 @@ include = [
 ]
 
 [tool.basedpyright]
+# pytest puts the test directory on sys.path, so a test importing a sibling
+# helper (arrow_util) is a plain top-level import at runtime. Tell basedpyright
+# the same, rather than have it read those as implicitly relative.
+executionEnvironments = [{ root = "tests", extraPaths = ["tests"] }]
 exclude = [
     "**/node_modules", 
     "**/__pycache__",
