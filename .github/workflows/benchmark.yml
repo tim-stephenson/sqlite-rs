@@ -28,9 +28,6 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: uv sync --group bench
       - run: uv run maturin develop --uv --release
-      # Temporary, with the diagnostic itself.
-      - shell: bash
-        run: uv run python scripts/diagnose_ffi.py | tee ffi.txt
       - id: run
         shell: bash
         run: |
@@ -42,6 +39,5 @@ jobs:
             echo "### ${{ matrix.runner }} -- ${{ runner.arch }}, Python ${{ env.PYTHON_VERSION }}"
             echo '```'
             cat result.txt
-            cat ffi.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

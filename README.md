@@ -149,6 +149,19 @@ which you have. On one machine, 10M rows of a four-column STRICT table:
 | adbc | 2.23 | 1.58 GB |
 | stdlib `fetchall()` | 4.28 | 2.56 GB |
 
+The `Benchmark` workflow runs the same thing on CI, one interpreter, by hand.
+10M rows again, seconds and peak RSS:
+
+| | sqlite_rs | adbc | stdlib |
+| --- | --- | --- | --- |
+| windows-latest, x64 | 1.60 / 0.80 GB | 2.13 / 1.49 GB | 8.27 / 2.81 GB |
+| ubuntu-latest, x64 | 1.85 / 0.81 GB | 4.09 / 1.74 GB | 7.86 / 2.76 GB |
+| macos-latest, arm64 | 1.94 / 0.79 GB | 4.65 / 1.27 GB | 9.45 / 2.74 GB |
+
+Read those down a column, not across: a runner's absolute speed moves by up to
+2x between runs, so the same code has measured 1.57s and 2.87s on Windows.
+Only the three modes within one run are comparable, having shared a machine.
+
 Every mode starts warm -- the file is read once before any of them run, their
 modules are imported before their clock starts, and each fetches 50k rows
 through its own path first -- so the first two repeat to within a percent or
