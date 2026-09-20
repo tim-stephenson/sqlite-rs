@@ -7,6 +7,10 @@
 /// the bundled `libsqlite_rs_sqlite3` built by build.rs -- see
 /// .cargo/config.toml for how that name is forced past libsqlite3-sys's
 /// hardcoded `sqlite3`.
+/// See the dependency's comment in Cargo.toml.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod columns;
 
 mod shim {

@@ -23,10 +23,19 @@
 //! arrow-rs itself) hold strings in: handing over anything else costs the
 //! consumer a conversion of the whole column.
 
-use arrow_array::builder::{BinaryViewBuilder, Float64Builder, Int64Builder, StringViewBuilder};
+use arrow_array::builder::{ArrayBuilder, BinaryViewBuilder, Float64Builder, Int64Builder, StringViewBuilder};
 use arrow_array::{Array, ArrayRef, BinaryViewArray, Float64Array, Int64Array, NullArray, StringViewArray};
 use arrow_schema::{DataType, Field};
 use std::sync::Arc;
+
+/// Rows a column is sized for the moment it gets a type.
+///
+/// Promotion is the exception rather than the rule -- a STRICT table never
+/// promotes at all -- so a builder that exists is almost always one that will
+/// go on being filled, and starting it at one row means a run of reallocations
+/// to get anywhere. Tens of kilobytes, against a result that turns out to be
+/// small.
+const INITIAL_CAPACITY: usize = 4096;
 
 /// One SQLite value, borrowed from the statement that produced it.
 #[derive(Debug, Clone, Copy)]
@@ -69,6 +78,16 @@ impl Default for ColumnBuilder {
 }
 
 impl ColumnBuilder {
+    fn len(&self) -> usize {
+        match self {
+            ColumnBuilder::Null(nulls) => *nulls,
+            ColumnBuilder::Int(b) => b.len(),
+            ColumnBuilder::Real(b) => b.len(),
+            ColumnBuilder::Text(b) => b.len(),
+            ColumnBuilder::Blob(b) => b.len(),
+        }
+    }
+
     fn rank(&self) -> u8 {
         match self {
             ColumnBuilder::Null(_) => 0,
@@ -138,11 +157,13 @@ impl ColumnBuilder {
     /// it go through exactly the same conversion.
     fn promote_to(&mut self, rank: u8) {
         let old = std::mem::take(self);
+        // Room for what is about to be replayed, on top of the head start.
+        let capacity = INITIAL_CAPACITY.max(old.len());
         let mut new = match rank {
-            1 => ColumnBuilder::Int(Int64Builder::new()),
-            2 => ColumnBuilder::Real(Float64Builder::new()),
-            3 => ColumnBuilder::Text(StringViewBuilder::new()),
-            _ => ColumnBuilder::Blob(BinaryViewBuilder::new()),
+            1 => ColumnBuilder::Int(Int64Builder::with_capacity(capacity)),
+            2 => ColumnBuilder::Real(Float64Builder::with_capacity(capacity)),
+            3 => ColumnBuilder::Text(StringViewBuilder::with_capacity(capacity)),
+            _ => ColumnBuilder::Blob(BinaryViewBuilder::with_capacity(capacity)),
         };
         old.replay_into(&mut new);
         *self = new;
