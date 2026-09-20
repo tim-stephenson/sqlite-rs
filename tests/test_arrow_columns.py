@@ -47,36 +47,18 @@ def test_columns_carry_their_names() -> None:
     assert [au.name(c) for c in columns] == ["a", "renamed"]
 
 
-def test_columns_export_over_the_pycapsule_interface() -> None:
+def test_arrays_export_over_the_pycapsule_interface() -> None:
     # The whole point of returning Arrow: pyarrow, polars and duckdb consume
     # these without sqlite_rs depending on any of them.
     conn = sqlite_rs.sqlite3.connect(":memory:")
     [column] = sqlite_rs.execute_and_fetch_all(conn, "SELECT 1")
 
-    assert "arrow_schema" in repr(column.__arrow_c_schema__())
-    assert "arrow_array_stream" in repr(column.__arrow_c_stream__())
+    schema_capsule = column.__arrow_c_schema__()
+    schema, array = column.__arrow_c_array__()
 
-
-def test_a_late_value_promotes_the_chunks_closed_before_it() -> None:
-    # A column is built as a run of chunks, closed as the scan goes, so a
-    # value wide enough to promote it finds the earlier ones already built at
-    # the narrower type. They have to be rebuilt, through the same conversion
-    # a value promoted in-stream goes through.
-    rows = sqlite_rs.CHUNK_ROWS + 1000
-    conn = sqlite_rs.sqlite3.connect(":memory:")
-    _ = conn.execute("CREATE TABLE m (v)")
-    _ = conn.executemany("INSERT INTO m VALUES (?)", [(n,) for n in range(rows)])
-    _ = conn.execute("INSERT INTO m VALUES (?)", ("x",))
-
-    [column] = sqlite_rs.execute_and_fetch_all(conn, "SELECT v FROM m")
-
-    assert column.num_chunks > 1
-    assert au.dtype(column) == "utf8_view"
-    assert len(column) == rows + 1
-    # One from the first chunk, one from the last, and the value that did it.
-    assert column[0].as_py() == "0"
-    assert column[rows - 1].as_py() == str(rows - 1)
-    assert column[rows].as_py() == "x"
+    assert "arrow_schema" in repr(schema_capsule)
+    assert "arrow_schema" in repr(schema)
+    assert "arrow_array" in repr(array)
 
 
 @pytest.mark.parametrize(

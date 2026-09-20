@@ -33,18 +33,8 @@ use std::sync::Arc;
 /// Promotion is the exception rather than the rule -- a STRICT table never
 /// promotes at all -- so a builder that exists is almost always one that will
 /// go on being filled, and starting it at one row means a run of reallocations
-/// to get anywhere. Tens of kilobytes, against a result that turns out to be
-/// small.
+/// to get anywhere.
 const INITIAL_CAPACITY: usize = 4096;
-
-/// Rows per chunk.
-///
-/// A column is not one buffer that grows; it is a run of chunks this long.
-/// Growing meant reallocating and copying everything so far, over and over,
-/// which is cheap where the allocator can extend a mapping in place and
-/// expensive where it cannot. A chunk is allocated once, filled, and handed
-/// over.
-pub const CHUNK_ROWS: usize = 65_536;
 
 /// One SQLite value, borrowed from the statement that produced it.
 #[derive(Debug, Clone, Copy)]
@@ -167,63 +157,15 @@ impl ColumnBuilder {
     fn promote_to(&mut self, rank: u8) {
         let old = std::mem::take(self);
         // Room for what is about to be replayed, on top of the head start.
-        let mut new = Self::with_rank(rank, INITIAL_CAPACITY.max(old.len()));
-        old.replay_into(&mut new);
-        *self = new;
-    }
-
-    /// An empty builder for `rank`, sized for `capacity` rows.
-    fn with_rank(rank: u8, capacity: usize) -> Self {
-        match rank {
-            0 => ColumnBuilder::Null(0),
+        let capacity = INITIAL_CAPACITY.max(old.len());
+        let mut new = match rank {
             1 => ColumnBuilder::Int(Int64Builder::with_capacity(capacity)),
             2 => ColumnBuilder::Real(Float64Builder::with_capacity(capacity)),
             3 => ColumnBuilder::Text(StringViewBuilder::with_capacity(capacity)),
             _ => ColumnBuilder::Blob(BinaryViewBuilder::with_capacity(capacity)),
-        }
-    }
-
-    /// The Arrow type a builder of `rank` produces.
-    fn data_type(rank: u8) -> DataType {
-        match rank {
-            0 => DataType::Null,
-            1 => DataType::Int64,
-            2 => DataType::Float64,
-            3 => DataType::Utf8View,
-            _ => DataType::BinaryView,
-        }
-    }
-
-    /// Take what has accumulated as a chunk, leaving the builder empty, of the
-    /// same type, and sized for the next one.
-    fn take(&mut self) -> ArrayRef {
-        match self {
-            ColumnBuilder::Null(nulls) => {
-                let array = Arc::new(NullArray::new(*nulls));
-                *nulls = 0;
-                array
-            }
-            ColumnBuilder::Int(b) => {
-                let array = Arc::new(b.finish());
-                *b = Int64Builder::with_capacity(CHUNK_ROWS);
-                array
-            }
-            ColumnBuilder::Real(b) => {
-                let array = Arc::new(b.finish());
-                *b = Float64Builder::with_capacity(CHUNK_ROWS);
-                array
-            }
-            ColumnBuilder::Text(b) => {
-                let array = Arc::new(b.finish());
-                *b = StringViewBuilder::with_capacity(CHUNK_ROWS);
-                array
-            }
-            ColumnBuilder::Blob(b) => {
-                let array = Arc::new(b.finish());
-                *b = BinaryViewBuilder::with_capacity(CHUNK_ROWS);
-                array
-            }
-        }
+        };
+        old.replay_into(&mut new);
+        *self = new;
     }
 
     /// Feed every value accumulated so far into `target`.
@@ -243,95 +185,18 @@ impl ColumnBuilder {
         }
     }
 
-}
-
-/// One result column, accumulated as a run of chunks.
-pub struct Column {
-    name: String,
-    /// Finished chunks, each with the promotion rank it was built at. A value
-    /// wide enough to promote the column arrives long after earlier chunks
-    /// have been closed, so they can disagree until `finish` settles them.
-    chunks: Vec<(u8, ArrayRef)>,
-    builder: ColumnBuilder,
-    pending: usize,
-}
-
-impl Column {
-    pub fn new(name: String) -> Self {
-        Column {
-            name,
-            chunks: Vec::new(),
-            builder: ColumnBuilder::default(),
-            pending: 0,
-        }
+    /// The finished column, plus the Arrow field describing it.
+    pub fn finish(self, name: &str) -> (ArrayRef, Field) {
+        let (array, data_type): (ArrayRef, DataType) = match self {
+            // A column of nothing but NULLs has no value type to infer.
+            ColumnBuilder::Null(nulls) => (Arc::new(NullArray::new(nulls)), DataType::Null),
+            ColumnBuilder::Int(mut b) => (Arc::new(b.finish()), DataType::Int64),
+            ColumnBuilder::Real(mut b) => (Arc::new(b.finish()), DataType::Float64),
+            ColumnBuilder::Text(mut b) => (Arc::new(b.finish()), DataType::Utf8View),
+            ColumnBuilder::Blob(mut b) => (Arc::new(b.finish()), DataType::BinaryView),
+        };
+        (array, Field::new(name, data_type, true))
     }
-
-    #[inline]
-    pub fn push(&mut self, cell: Cell<'_>) {
-        self.builder.push(cell);
-        self.pending += 1;
-        if self.pending == CHUNK_ROWS {
-            self.close_chunk();
-        }
-    }
-
-    #[inline(never)]
-    fn close_chunk(&mut self) {
-        let rank = self.builder.rank();
-        self.chunks.push((rank, self.builder.take()));
-        self.pending = 0;
-    }
-
-    /// The column's chunks, all of one type, and the field describing them.
-    ///
-    /// Chunks closed before a promotion hold a narrower type than the ones
-    /// after it, and an Arrow column is one type throughout. The narrow ones
-    /// are replayed through the same `append` an in-stream promotion uses, so
-    /// a value converted here and one converted there come out identical.
-    pub fn finish(mut self) -> (Vec<ArrayRef>, Field) {
-        // Unconditionally, so a column that saw no rows still has a chunk and
-        // reports a length of zero rather than nothing at all.
-        self.close_chunk();
-        let rank = self.chunks.iter().map(|(rank, _)| *rank).max().unwrap_or(0);
-
-        let chunks = self
-            .chunks
-            .into_iter()
-            .map(|(chunk_rank, array)| {
-                if chunk_rank == rank {
-                    array
-                } else {
-                    promote_array(&array, rank)
-                }
-            })
-            .collect();
-        (chunks, Field::new(self.name, ColumnBuilder::data_type(rank), true))
-    }
-}
-
-/// Rebuild a closed chunk at a wider rank, value by value.
-fn promote_array(array: &ArrayRef, rank: u8) -> ArrayRef {
-    let mut target = ColumnBuilder::with_rank(rank, array.len());
-    match array.data_type() {
-        DataType::Null => {
-            for _ in 0..array.len() {
-                target.append(Cell::Null);
-            }
-        }
-        DataType::Int64 => replay(as_array::<Int64Array>(array), &mut target, |a, i| Cell::Int(a.value(i))),
-        DataType::Float64 => replay(as_array::<Float64Array>(array), &mut target, |a, i| Cell::Real(a.value(i))),
-        DataType::Utf8View => replay(as_array::<StringViewArray>(array), &mut target, |a, i| Cell::Text(a.value(i))),
-        // Nothing is wider than BinaryView, so it is never the one promoted.
-        _ => unreachable!("{:?} cannot be promoted", array.data_type()),
-    }
-    target.take()
-}
-
-fn as_array<A: Array + 'static>(array: &ArrayRef) -> &A {
-    array
-        .as_any()
-        .downcast_ref::<A>()
-        .expect("chunk's array matches the type it was built at")
 }
 
 fn replay<A: Array + 'static>(array: &A, target: &mut ColumnBuilder, cell: impl Fn(&A, usize) -> Cell<'_>) {

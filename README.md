@@ -17,10 +17,10 @@ conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
 
 sqlite_rs.execute_and_fetch_all(conn, "INSERT INTO t VALUES (1, 'x')")
 
-# One Arrow column per result column, each as long as the number of rows.
+# One Arrow array per column, each as long as the number of rows.
 a, b = sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM t")
 len(a), len(b)  # (1, 1)
-a.__arrow_c_stream__()  # -> polars.Series(a), pyarrow.chunked_array(a), ...
+a.__arrow_c_array__()  # -> pyarrow.array(a), polars.from_arrow(a), ...
 
 cur = conn.execute("SELECT * FROM t")
 sqlite_rs.get_raw_stmt_ptr(cur)  # ctypes.c_void_p -> sqlite3_stmt*
@@ -30,13 +30,9 @@ sqlite_rs.get_raw_db_ptr(conn)  # ctypes.c_void_p -> sqlite3*
 sqlite_rs.LIBSQLITE3_PATH  # the bundled library, for ctypes.CDLL
 ```
 
-Results are columnar. Each column exports `__arrow_c_stream__` and
+Results are columnar. Each array exports `__arrow_c_array__` and
 `__arrow_c_schema__`, so pyarrow, polars and duckdb consume them without a
 copy -- and without sqlite_rs depending on any Arrow package itself.
-
-A column is not one buffer but a run of `CHUNK_ROWS` chunks. One buffer would
-have to grow, and growing means reallocating and copying everything so far,
-over and over; a chunk is allocated once, filled, and handed over.
 
 SQLite types values per row, not per column, so a column is accumulated into
 one contiguous typed buffer on the assumption the type it has been seeing is
@@ -55,10 +51,7 @@ of the whole column.
 
 NULL never promotes anything, it only contributes a null slot; a column of
 nothing but NULLs stays Arrow `null`. Promotion is one-way, so a column is
-rebuilt at most four times however many rows it has. A value wide enough to
-promote one can arrive after earlier chunks are closed; those are rebuilt
-through the same conversion, so where in the scan a value turned up never
-changes what it becomes.
+rebuilt at most four times however many rows it has.
 
 Supported on CPython 3.11-3.15, including free-threaded 3.15t, for Linux
 (glibc and musl), macOS and Windows.
@@ -82,12 +75,11 @@ package's own clone module built. A stdlib object raises `TypeError`.
 | `get_raw_stmt_ptr(cursor)` | the `sqlite3_stmt*`, as a `ctypes.c_void_p` |
 | `*_via_raw_pointer(...)` | all four again, from a pointer |
 | `LIBSQLITE3_PATH` | the bundled library, for `ctypes.CDLL` |
-| `CHUNK_ROWS` | rows in each chunk of a column |
 | `DEBUG_BUILD` | whether the extension was built without optimization |
 
-The `_all` pair returns one chunked array per result column, and `[]` for a
-statement with no result columns, such as an `INSERT`; the `_table` pair
-returns the same chunks as one table, empty for such a statement. `sql` must hold a
+The `_all` pair returns one array per result column, and `[]` for a statement
+with no result columns, such as an `INSERT`; the `_table` pair returns the
+same columns as one table, empty for such a statement. `sql` must hold a
 single statement: a second one raises `ValueError` rather than being silently
 dropped, and a SQL error is a `ValueError` carrying SQLite's own message.
 
