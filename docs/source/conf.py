@@ -27,7 +27,24 @@ version = ".".join(release.split(".", maxsplit=2)[:2])
 
 extensions = [
     "myst_parser",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.intersphinx",
 ]
+
+# The API pages are generated from the docstrings the extension carries at
+# runtime, so there is one copy of each and it is the one help() prints.
+autodoc_member_order = "bysource"
+autodoc_default_options = {"members": True, "undoc-members": False}
+
+# Docstrings are written for help(), where `x` reads as code rather than as
+# reStructuredText's default "title reference".
+default_role = "code"
+
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "polars": ("https://docs.pola.rs/api/python/stable", None),
+}
 
 templates_path = ["_templates"]
 exclude_patterns = []

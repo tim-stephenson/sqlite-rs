@@ -1,20 +1,24 @@
-"""sqlite_rs: a Rust reimplementation of SQLite.
+"""A drop-in superset of Python's sqlite3 bindings, extended with Rust.
 
-Validated against real SQLite in-process: three things in this package
-dynamically link the exact same bundled ``libsqlite3`` (see
-``vendor/sqlite/``), so a live connection can be shared between them
-without serializing/reopening:
+``sqlite_rs.sqlite3`` is a from-scratch build of CPython's own ``sqlite3``
+module (vendored unmodified, see ``vendor/cpython/``), used exactly like it.
+On top of that, ``sqlite_rs`` adds Rust functions that act on the *same* live
+connection and return Arrow columns.
 
-- ``sqlite_rs.sqlite3`` -- a from-scratch build of CPython's own stdlib
-  ``sqlite3`` package (vendored unmodified, see ``vendor/cpython/``): the
-  DB-API 2.0 wrapper (``sqlite3.dbapi2``) around a C extension
-  (``sqlite3._sqlite3``). Use it exactly like the stdlib ``sqlite3`` module,
-  e.g. ``sqlite_rs.sqlite3.connect(...)``.
-- ``sqlite_rs._core`` -- this project's Rust extension. :func:`execute_and_fetch_all`
-  and :func:`get_raw_db_ptr` require a ``sqlite_rs.sqlite3.Connection``
-  (not one from the stdlib ``sqlite3`` module); ``_core`` enforces that
-  itself.
-- The bundled ``libsqlite3`` dynamic library itself, at :data:`LIBSQLITE3_PATH`.
+That sharing is the point, and it is what the bundling buys: three things here
+dynamically link one and the same ``libsqlite3`` (see ``vendor/sqlite/``), so a
+``sqlite3*`` or ``sqlite3_stmt*`` can be handed between them rather than
+reopened.
+
+- ``sqlite_rs.sqlite3`` -- the clone module: the DB-API 2.0 wrapper
+  (``sqlite3.dbapi2``) around a C extension (``sqlite3._sqlite3``). Use it
+  exactly like the stdlib ``sqlite3`` module, e.g.
+  ``sqlite_rs.sqlite3.connect(...)``.
+- ``sqlite_rs._core`` -- this project's Rust extension. :func:`fetch_all` and
+  the rest require a connection or cursor from the clone module, not from the
+  stdlib ``sqlite3``, and enforce that themselves.
+- The bundled ``libsqlite3`` itself, at :data:`LIBSQLITE3_PATH`, for a
+  ``ctypes`` caller that wants to drive the same connection directly.
 """
 
 import sys
@@ -52,6 +56,11 @@ _LIBSQLITE3_NAMES = {
     "darwin": "libsqlite_rs_sqlite3.dylib",
     "win32": "sqlite_rs_libsqlite3.dll",
 }
+
+#: True when the extension was built without optimization, which costs roughly
+#: 3x on a large fetch. The benchmark script refuses to report numbers from
+#: such a build.
+DEBUG_BUILD: bool
 
 #: Path to the libsqlite3 dylib/so bundled alongside this package's native
 #: modules -- the one library ``sqlite3.connect``, :func:`execute_and_fetch_all`,
