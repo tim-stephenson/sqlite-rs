@@ -18,3 +18,8 @@
 SQLITE3_LIB_DIR = { value = "target/sqlite3-link", relative = true }
 SQLITE3_INCLUDE_DIR = { value = "vendor/sqlite", relative = true }
 PKG_CONFIG_LIBDIR = { value = "target/sqlite3-link/no-pkg-config", relative = true }
+
+# The floor that -Wl,-fixup_chains in build.rs needs; see the comment there.
+# force: maturin puts 11.0 in the environment, and a plain value would lose.
+# CI's macos job sets the same value, so wheel tags match the binary.
+MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }

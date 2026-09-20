@@ -251,6 +251,9 @@ jobs:
   macos:
     runs-on: ${{ matrix.platform.runner }}
     needs: config
+    # Matches .cargo/config.toml, so the wheel tag matches the binary.
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "12.0"
     strategy:
       fail-fast: false
       matrix:
