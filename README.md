@@ -82,26 +82,3 @@ The bundled SQLite is deliberately named `libsqlite_rs_sqlite3`, not
 already-loaded module's bare filename, so an unprefixed name silently binds to
 CPython's own SQLite instead. `.cargo/config.toml` exists to force that name
 past libsqlite3-sys, which hardcodes `sqlite3`.
-
-
-## TODO
-
-### worth doing
-
-- Harden how `native/` finds the `sqlite3*` inside a Python connection. It
-  reads CPython's private struct layout, and that is the one thing here a
-  CPython point release could break without warning.
-- Test the targets that are built but never imported: linux i686, win32,
-  win_arm64. Every wheel that ships should have been imported somewhere first.
-- Parametrize the tests over all three ways in -- `ctypes` on the bundled
-  library, `sqlite_rs.sqlite3`, and the Rust functions -- so each is covered by
-  the same cases instead of its own.
-
-### maybe
-
-- Generate `python/sqlite_rs/__init__.pyi` with `pyo3-stub-gen` rather than
-  keeping it by hand. It cannot infer the Arrow protocols, so some of it would
-  stay hand-written either way.
-- Move PyPI publishing to trusted publishing and drop `PYPI_API_TOKEN`.
-- Tidy the scripts that vendor `sqlite`, CPython's `sqlite` wrapper and the
-  typeshed stubs.
