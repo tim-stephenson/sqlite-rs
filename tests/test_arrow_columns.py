@@ -145,6 +145,26 @@ def test_cursor_results_promote_identically() -> None:
     assert au.values(via_cursor) == ["1", "2.5", "x"]
 
 
+def test_a_wide_row_keeps_every_value_in_its_own_column() -> None:
+    # Values are read one row at a time, but only the first of a row is
+    # located by name; the rest are found by walking. A column that picked up
+    # its neighbour's value would still look well-formed, so check a row wide
+    # enough, and mixed enough, for a misstep to show.
+    conn = sqlite_rs.sqlite3.connect(":memory:")
+    _ = conn.execute("CREATE TABLE w (a, b, c, d, e, f)")
+    _ = conn.executemany(
+        "INSERT INTO w VALUES (?, ?, ?, ?, ?, ?)",
+        [(None, 1, 2.5, "x", b"\xff", 7), (8, None, 9.5, "y", b"\x00", 10)],
+    )
+
+    columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT a, b, c, d, e, f FROM w")
+
+    assert au.rows(columns) == [
+        [None, 1, 2.5, "x", b"\xff", 7],
+        [8, None, 9.5, "y", b"\x00", 10],
+    ]
+
+
 def test_empty_result_has_columns_but_no_rows() -> None:
     conn = sqlite_rs.sqlite3.connect(":memory:")
     _ = conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")

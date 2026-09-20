@@ -209,44 +209,100 @@ mod _core {
         // A DB-API cursor's statement is already positioned on a row, because
         // execute() steps once; a freshly prepared one is not. Stepping first
         // in the former case would silently drop the first row.
-        if unsafe { ffi::sqlite3_data_count(stmt) } > 0 {
-            read_row(stmt, builders);
+        if unsafe { ffi::sqlite3_data_count(stmt) } == 0 && !step(stmt, db)? {
+            return Ok(());
         }
+        let stride = probe_stride(stmt, builders.len());
         loop {
-            match unsafe { ffi::sqlite3_step(stmt) } {
-                ffi::SQLITE_ROW => read_row(stmt, builders),
-                ffi::SQLITE_DONE => return Ok(()),
-                rc => return Err(db_err(db, "sqlite3_step", rc)),
+            read_row(stmt, builders, stride);
+            if !step(stmt, db)? {
+                return Ok(());
             }
         }
     }
 
-    /// Decode one row's cells into their columns.
+    /// Advance to the next row. `false` once the statement is exhausted.
+    fn step(stmt: *mut ffi::sqlite3_stmt, db: *mut ffi::sqlite3) -> PyResult<bool> {
+        match unsafe { ffi::sqlite3_step(stmt) } {
+            ffi::SQLITE_ROW => Ok(true),
+            ffi::SQLITE_DONE => Ok(false),
+            rc => Err(db_err(db, "sqlite3_step", rc)),
+        }
+    }
+
+    /// The distance from one of a row's values to the next, if they really do
+    /// sit in an array. Must be called with the statement on a row.
     ///
-    /// `sqlite3_column_value` once per cell, rather than `sqlite3_column_type`
-    /// plus a typed getter: each of those takes the connection mutex, and the
-    /// `sqlite3_value_*` accessors take none. The value it returns is
-    /// unprotected, so reading it is only safe while that mutex is held --
-    /// which `collect_rows` arranges for the whole scan.
-    fn read_row(stmt: *mut ffi::sqlite3_stmt, builders: &mut [ColumnBuilder]) {
-        for (i, builder) in builders.iter_mut().enumerate() {
-            let cell = unsafe {
-                let v = ffi::sqlite3_column_value(stmt, i as i32);
-                match ffi::sqlite3_value_type(v) {
-                    ffi::SQLITE_INTEGER => Cell::Int(ffi::sqlite3_value_int64(v)),
-                    ffi::SQLITE_FLOAT => Cell::Real(ffi::sqlite3_value_double(v)),
-                    ffi::SQLITE_TEXT => {
-                        let bytes = column_slice(ffi::sqlite3_value_text(v), ffi::sqlite3_value_bytes(v));
-                        std::str::from_utf8(bytes).map_or(Cell::Blob(bytes), Cell::Text)
-                    }
-                    ffi::SQLITE_BLOB => Cell::Blob(column_slice(
-                        ffi::sqlite3_value_blob(v).cast::<u8>(),
-                        ffi::sqlite3_value_bytes(v),
-                    )),
-                    _ => Cell::Null,
+    /// `sqlite3_column_value` is the only way to reach a value, and it is not
+    /// a cheap call: it takes the connection mutex, runs the statement's error
+    /// bookkeeping, and only then returns `&stmt->pResultRow[i]`. Making it
+    /// per cell rather than per row is about a third of a wide scan.
+    ///
+    /// That the values are an array is not something the API promises, so this
+    /// checks it against the real thing on the first row and gives up if it
+    /// does not hold, leaving `read_row` calling per cell. The stride is
+    /// `sizeof(Mem)`, a constant of the linked library, so one row settles it
+    /// for the whole statement.
+    fn probe_stride(stmt: *mut ffi::sqlite3_stmt, ncols: usize) -> Option<usize> {
+        let at = |i: usize| unsafe { ffi::sqlite3_column_value(stmt, i as i32) } as usize;
+        if ncols < 2 {
+            // One call per row either way.
+            return None;
+        }
+        let base = at(0);
+        let stride = at(1).checked_sub(base)?;
+        if stride == 0 || (2..ncols).any(|i| at(i) != base + stride * i) {
+            return None;
+        }
+        Some(stride)
+    }
+
+    /// Decode one row's cells into their columns.
+    fn read_row(stmt: *mut ffi::sqlite3_stmt, builders: &mut [ColumnBuilder], stride: Option<usize>) {
+        match stride {
+            // Skipping `sqlite3_column_value` for the rest of the row also
+            // skips the MEM_Static-to-MEM_Ephem flag it flips, which only
+            // matters to `sqlite3_value_dup` and `sqlite3_result_value`, and
+            // the error bookkeeping, which `sqlite3_step` does anyway.
+            Some(stride) => {
+                let base = unsafe { ffi::sqlite3_column_value(stmt, 0) }.cast::<u8>();
+                for (i, builder) in builders.iter_mut().enumerate() {
+                    builder.push(unsafe { decode(base.add(stride * i).cast()) });
                 }
-            };
-            builder.push(cell);
+            }
+            None => {
+                for (i, builder) in builders.iter_mut().enumerate() {
+                    builder.push(unsafe { decode(ffi::sqlite3_column_value(stmt, i as i32)) });
+                }
+            }
+        }
+    }
+
+    /// Read one of a row's values.
+    ///
+    /// The `sqlite3_value_*` accessors take no mutex, unlike their
+    /// `sqlite3_column_*` counterparts, which is what makes one
+    /// `sqlite3_column_value` per row worth reaching for. Values obtained that
+    /// way are unprotected, so reading them is only safe while the connection
+    /// mutex is held -- which `collect_rows` arranges for the whole scan.
+    ///
+    /// Each accessor is called only for the type the value already has, so
+    /// none of them converts it in place.
+    unsafe fn decode<'a>(value: *mut ffi::sqlite3_value) -> Cell<'a> {
+        unsafe {
+            match ffi::sqlite3_value_type(value) {
+                ffi::SQLITE_INTEGER => Cell::Int(ffi::sqlite3_value_int64(value)),
+                ffi::SQLITE_FLOAT => Cell::Real(ffi::sqlite3_value_double(value)),
+                ffi::SQLITE_TEXT => {
+                    let bytes = column_slice(ffi::sqlite3_value_text(value), ffi::sqlite3_value_bytes(value));
+                    std::str::from_utf8(bytes).map_or(Cell::Blob(bytes), Cell::Text)
+                }
+                ffi::SQLITE_BLOB => Cell::Blob(column_slice(
+                    ffi::sqlite3_value_blob(value).cast::<u8>(),
+                    ffi::sqlite3_value_bytes(value),
+                )),
+                _ => Cell::Null,
+            }
         }
     }
 
