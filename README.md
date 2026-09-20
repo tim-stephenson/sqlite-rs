@@ -64,15 +64,17 @@ package's own clone module built. A stdlib object raises `TypeError`.
 | --- | --- |
 | `execute_and_fetch_all(connection, sql)` | run one statement, return its columns |
 | `fetch_all(cursor)` | drain a cursor's statement, return its columns |
+| `execute_and_fetch_table(connection, sql)` | the same, as one table |
+| `fetch_table(cursor)` | the same, as one table |
 | `get_raw_db_ptr(connection)` | the `sqlite3*`, as a `ctypes.c_void_p` |
 | `get_raw_stmt_ptr(cursor)` | the `sqlite3_stmt*`, as a `ctypes.c_void_p` |
-| `execute_and_fetch_all_via_raw_pointer(db_ptr, sql)` | the same, from a pointer |
-| `fetch_all_via_raw_pointer(stmt_ptr)` | the same, from a pointer |
+| `*_via_raw_pointer(...)` | all four again, from a pointer |
 | `LIBSQLITE3_PATH` | the bundled library, for `ctypes.CDLL` |
 | `DEBUG_BUILD` | whether the extension was built without optimization |
 
-Both fetch functions return one array per result column, and `[]` for a
-statement with no result columns, such as an `INSERT`. `sql` must hold a
+The `_all` pair returns one array per result column, and `[]` for a statement
+with no result columns, such as an `INSERT`; the `_table` pair returns the
+same columns as one table, empty for such a statement. `sql` must hold a
 single statement: a second one raises `ValueError` rather than being silently
 dropped, and a SQL error is a `ValueError` carrying SQLite's own message.
 
@@ -80,28 +82,37 @@ dropped, and a SQL error is a `ValueError` carrying SQLite's own message.
 position -- rows it returns are rows the cursor will no longer yield. It
 leaves the cursor exhausted but usable; `execute()` it again to reuse it.
 
-The two `_via_raw_pointer` functions are the mirror image: they take a pointer
-an unrelated FFI caller already holds, so the sharing works in both
+The `_via_raw_pointer` functions are the mirror image: they take a pointer an
+unrelated FFI caller already holds, so the sharing works in both
 directions. There is no object to check, so the pointer is trusted as given.
 
 `help()` on any of these has the rest.
 
 ### Handing the columns on
 
-Each array carries its column name in the schema it exports, so a consumer
-that reads the schema needs nothing else:
+`fetch_all` gives you the columns separately, each carrying its name in the
+schema it exports, so a consumer that reads the schema needs nothing else:
 
 ```python
 import polars as pl
 
 columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT a, b AS renamed FROM t")
-frame = pl.DataFrame([pl.Series(c) for c in columns])
-frame.columns  # ['a', 'renamed']
+pl.DataFrame([pl.Series(c) for c in columns]).columns  # ['a', 'renamed']
 ```
 
-Per column rather than all at once, because an Arrow *array* has no name --
-only the field describing it does -- so `pl.DataFrame(columns)` would see one
-unnamed thing rather than two named ones.
+It has to be column by column: a plain list is *data* to `pl.DataFrame`, not a
+container of columns, so `pl.DataFrame(columns)` gives one object-typed column
+holding the arrays themselves. `fetch_table` exists for that -- the same
+arrays behind one `__arrow_c_stream__`, which a whole-table consumer takes in
+a single call:
+
+```python
+pl.DataFrame(sqlite_rs.execute_and_fetch_table(conn, sql)).columns
+```
+
+Neither form copies. At 10M rows, building the frame off either one costs no
+measurable time or memory for `int64` and `float64` columns; a `utf8` column
+costs polars a conversion into its own string layout, identically both ways.
 
 
 ## Development

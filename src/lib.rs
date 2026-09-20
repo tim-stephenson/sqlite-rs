@@ -30,7 +30,9 @@ mod _core {
     use super::columns::{Cell, ColumnBuilder};
     use pyo3::exceptions::{PyTypeError, PyValueError};
     use pyo3::prelude::*;
-    use pyo3_arrow::PyArray;
+    use pyo3_arrow::{PyArray, PyTable};
+    use arrow_array::RecordBatch;
+    use arrow_schema::Schema;
     use rusqlite::ffi;
     use std::os::raw::c_int;
     use std::sync::Arc;
@@ -54,7 +56,18 @@ mod _core {
     /// a SQL error, or SQL holding more than one statement.
     #[pyfunction]
     fn execute_and_fetch_all(connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
-        run_query(connection_db(&connection)?, sql)
+        Ok(run_query(connection_db(&connection)?, sql)?.into_arrays())
+    }
+
+    /// `execute_and_fetch_all`, as one table rather than a list of columns.
+    ///
+    /// The same arrays, with their names, behind a single object exporting
+    /// `__arrow_c_stream__`. A consumer that reads a whole table -- polars'
+    /// `DataFrame`, pyarrow's `table` -- takes it in one call, where a list
+    /// of arrays has to be assembled column by column.
+    #[pyfunction]
+    fn execute_and_fetch_table(connection: Bound<'_, PyAny>, sql: &str) -> PyResult<PyTable> {
+        run_query(connection_db(&connection)?, sql)?.into_table()
     }
 
     /// Return the `sqlite3*` backing `connection` as a `ctypes.c_void_p`.
@@ -80,7 +93,13 @@ mod _core {
     /// rejected.
     #[pyfunction]
     fn execute_and_fetch_all_via_raw_pointer(db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
-        run_query(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)
+        Ok(run_query(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)?.into_arrays())
+    }
+
+    /// `execute_and_fetch_all_via_raw_pointer`, as one table.
+    #[pyfunction]
+    fn execute_and_fetch_table_via_raw_pointer(db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<PyTable> {
+        run_query(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)?.into_table()
     }
 
     /// Return the `sqlite3_stmt*` backing `cursor` as a `ctypes.c_void_p`,
@@ -109,12 +128,13 @@ mod _core {
     /// `ValueError` for one that is closed or has never executed.
     #[pyfunction]
     fn fetch_all(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Vec<PyArray>> {
-        let stmt = cursor_stmt(py, &cursor)?;
-        let rows = collect_rows(stmt);
-        // Unconditionally, including on error: a drained statement left in
-        // place would abort the interpreter on the cursor's next use.
-        unsafe { shim::sqlite_rs_cursor_release_stmt(cursor.as_ptr()) };
-        rows
+        Ok(drain_cursor(py, &cursor)?.into_arrays())
+    }
+
+    /// `fetch_all`, as one table rather than a list of columns.
+    #[pyfunction]
+    fn fetch_table(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<PyTable> {
+        drain_cursor(py, &cursor)?.into_table()
     }
 
     /// `fetch_all` against a `sqlite3_stmt*` the caller already holds, from
@@ -131,7 +151,23 @@ mod _core {
     /// leaves the cursor correctly exhausted.
     #[pyfunction]
     fn fetch_all_via_raw_pointer(stmt_ptr: Bound<'_, PyAny>) -> PyResult<Vec<PyArray>> {
-        collect_rows(raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)
+        Ok(collect_rows(raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)?.into_arrays())
+    }
+
+    /// `fetch_all_via_raw_pointer`, as one table.
+    #[pyfunction]
+    fn fetch_table_via_raw_pointer(stmt_ptr: Bound<'_, PyAny>) -> PyResult<PyTable> {
+        collect_rows(raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)?.into_table()
+    }
+
+    /// Drain `cursor`'s statement, leaving the cursor fit to be reused.
+    fn drain_cursor(py: Python<'_>, cursor: &Bound<'_, PyAny>) -> PyResult<Columns> {
+        let stmt = cursor_stmt(py, cursor)?;
+        let columns = collect_rows(stmt);
+        // Unconditionally, including on error: a drained statement left in
+        // place would abort the interpreter on the cursor's next use.
+        unsafe { shim::sqlite_rs_cursor_release_stmt(cursor.as_ptr()) };
+        columns
     }
 
     /// Prepare `sql` against `db` and decode everything it returns.
@@ -141,9 +177,9 @@ mod _core {
     /// underneath, so its rows could not go through `read_row`. Its own
     /// per-row API costs about 40% more on a large fetch: two mutex-taking
     /// `sqlite3_column_*` calls per cell where `read_row` makes one.
-    fn run_query(db: *mut ffi::sqlite3, sql: &str) -> PyResult<Vec<PyArray>> {
+    fn run_query(db: *mut ffi::sqlite3, sql: &str) -> PyResult<Columns> {
         let Some(stmt) = prepare(db, sql)? else {
-            return Ok(Vec::new());
+            return Ok(Columns { builders: Vec::new(), names: Vec::new() });
         };
         let rows = collect_rows(stmt);
         unsafe { ffi::sqlite3_finalize(stmt) };
@@ -172,21 +208,47 @@ mod _core {
         Ok((!stmt.is_null()).then_some(stmt))
     }
 
-    fn finish(builders: Vec<ColumnBuilder>, names: &[String]) -> Vec<PyArray> {
-        builders
-            .into_iter()
-            .zip(names)
-            .map(|(builder, name)| {
-                let (array, field) = builder.finish(name);
-                PyArray::new(array, Arc::new(field))
-            })
-            .collect()
+    /// A finished scan, before it is handed to Python one way or the other.
+    struct Columns {
+        builders: Vec<ColumnBuilder>,
+        names: Vec<String>,
+    }
+
+    impl Columns {
+        /// One array per column, each carrying its name in its own schema.
+        fn into_arrays(self) -> Vec<PyArray> {
+            self.finish()
+                .map(|(array, field)| PyArray::new(array, Arc::new(field)))
+                .collect()
+        }
+
+        /// The same arrays behind one `__arrow_c_stream__`. The buffers are
+        /// moved, not copied: the table shares them with the arrays above.
+        fn into_table(self) -> PyResult<PyTable> {
+            let (arrays, fields): (Vec<_>, Vec<_>) = self.finish().unzip();
+            let schema = Arc::new(Schema::new(fields));
+            if arrays.is_empty() {
+                // A statement with no result columns. RecordBatch::try_new
+                // cannot represent one: with no array it has no row count.
+                return PyTable::try_new(Vec::new(), schema);
+            }
+            let batch = RecordBatch::try_new(Arc::clone(&schema), arrays)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            PyTable::try_new(vec![batch], schema)
+        }
+
+        fn finish(self) -> impl Iterator<Item = (arrow_array::ArrayRef, arrow_schema::Field)> {
+            self.builders
+                .into_iter()
+                .zip(self.names)
+                .map(|(builder, name)| builder.finish(&name))
+        }
     }
 
     /// Step an already-prepared statement to exhaustion and decode its rows.
     /// Never finalizes: a cursor's statement belongs to the cursor, and
     /// `run_query` finalizes its own.
-    fn collect_rows(stmt: *mut ffi::sqlite3_stmt) -> PyResult<Vec<PyArray>> {
+    fn collect_rows(stmt: *mut ffi::sqlite3_stmt) -> PyResult<Columns> {
         let ncols = unsafe { ffi::sqlite3_column_count(stmt) };
         let names: Vec<String> = (0..ncols)
             .map(|i| unsafe {
@@ -210,7 +272,7 @@ mod _core {
         let outcome = scan(stmt, db, &mut builders);
         unsafe { ffi::sqlite3_mutex_leave(mutex) };
 
-        outcome.map(|()| finish(builders, &names))
+        outcome.map(|()| Columns { builders, names })
     }
 
     /// The body of `collect_rows`'s scan, split out so that every way of

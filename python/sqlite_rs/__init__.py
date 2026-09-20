@@ -38,8 +38,12 @@ from sqlite_rs._core import (
     DEBUG_BUILD,  # pyright: ignore[reportUnknownVariableType]
     execute_and_fetch_all,  # pyright: ignore[reportUnknownVariableType]
     execute_and_fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
+    execute_and_fetch_table,  # pyright: ignore[reportUnknownVariableType]
+    execute_and_fetch_table_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     fetch_all,  # pyright: ignore[reportUnknownVariableType]
     fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
+    fetch_table,  # pyright: ignore[reportUnknownVariableType]
+    fetch_table_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     get_raw_db_ptr,  # pyright: ignore[reportUnknownVariableType]
     get_raw_stmt_ptr,  # pyright: ignore[reportUnknownVariableType]
 )
@@ -63,8 +67,12 @@ __all__ = [
     "LIBSQLITE3_PATH",
     "execute_and_fetch_all",
     "execute_and_fetch_all_via_raw_pointer",
+    "execute_and_fetch_table",
+    "execute_and_fetch_table_via_raw_pointer",
     "fetch_all",
     "fetch_all_via_raw_pointer",
+    "fetch_table",
+    "fetch_table_via_raw_pointer",
     "get_raw_db_ptr",
     "get_raw_stmt_ptr",
 ]
