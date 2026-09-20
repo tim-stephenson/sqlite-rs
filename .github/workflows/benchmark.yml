@@ -1,0 +1,41 @@
+# Manual: the fixture takes minutes to build and the run is not a pass/fail.
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      rows:
+        description: Rows in the fixture
+        default: "10000000"
+      python-version:
+        description: Interpreter to build and run against
+        default: "3.14"
+
+jobs:
+  benchmark:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: ${{ inputs.python-version }}
+      - run: uv sync --group bench
+      - run: uv run maturin develop --uv --release
+      - id: run
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/benchmark_fetch_all.py --rows "${{ inputs.rows }}" | tee result.txt
+      - shell: bash
+        run: |
+          {
+            echo "### ${{ matrix.runner }} -- ${{ runner.arch }}, Python ${{ inputs.python-version }}"
+            echo '```'
+            cat result.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

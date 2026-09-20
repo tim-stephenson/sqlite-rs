@@ -37,16 +37,16 @@ a debug one is roughly 3x slower, and is refused rather than reported:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import dataclasses
 import importlib
 import json
-import resource
 import sqlite3
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import cast
+from typing import ClassVar, cast, final
 
 BATCH = 1_000_000
 SCHEMA = """
@@ -107,7 +107,37 @@ class Result:
         )
 
 
+@final
+class _WindowsMemoryCounters(ctypes.Structure):
+    """PROCESS_MEMORY_COUNTERS, as far as the field this needs."""
+
+    _fields_: ClassVar = (
+        ("cb", ctypes.c_uint32),
+        ("PageFaultCount", ctypes.c_uint32),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    )
+
+
 def peak_rss_bytes() -> int:
+    if sys.platform == "win32":
+        # No getrusage on Windows; the peak working set is the counterpart.
+        counters = _WindowsMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        handle = ctypes.windll.kernel32.GetCurrentProcess()
+        _ = ctypes.windll.psapi.GetProcessMemoryInfo(
+            handle, ctypes.byref(counters), counters.cb
+        )
+        return int(counters.PeakWorkingSetSize)
+
+    import resource  # noqa: PLC0415
+
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     # ru_maxrss is bytes on macOS and kilobytes on Linux.
     return peak if sys.platform == "darwin" else peak * 1024
