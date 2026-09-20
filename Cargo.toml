@@ -1,6 +1,9 @@
 [package]
 name = "sqlite-rs"
-version = "0.1.0"
+# Cargo wants semver; maturin turns the pre-release into PEP 440's 0.1.0rc1
+# for the wheel. A rehearsal on TestPyPI spends whatever version it uploads,
+# so it spends this one rather than 0.1.0.
+version = "0.1.0-rc1"
 edition = "2024"
 # Older toolchains write a Mach-O whose string table follows the indirect
 # symbol table unpadded, which macOS 27's dyld rejects outright whenever the
