@@ -66,16 +66,22 @@ past libsqlite3-sys, which hardcodes `sqlite3`.
 
 ## TODO
 
+### worth doing
 
-### high
+- Harden how `native/` finds the `sqlite3*` inside a Python connection. It
+  reads CPython's private struct layout, and that is the one thing here a
+  CPython point release could break without warning.
+- Test the targets that are built but never imported: linux i686, win32,
+  win_arm64. Every wheel that ships should have been imported somewhere first.
+- Parametrize the tests over all three ways in -- `ctypes` on the bundled
+  library, `sqlite_rs.sqlite3`, and the Rust functions -- so each is covered by
+  the same cases instead of its own.
 
-- Add CI for building docs
+### maybe
 
-### nice to have
-
-- Use `pyo3-stub-gen`
-- Expand pytest tests to parametrize over the three ways to interact with `sqlite` (`ctypes` on the C library, `sqlite_rs.sqlite3`, or rust functions in `sqlite_rs._core`)
-- Clean up the scripts which vendor `sqlite`, the cpython `sqlite` wrapper, the `basedpyright` cpython `sqlite` type stubs
-- Look for improvements in the reliability of the method used to extract the sqlite connection from the python sqlite connection in `native/`
-- Add test jobs for the targets that build but are untested: linux i686, win32, win_arm64
-- Gate the release job on the test jobs; it currently only needs the build jobs
+- Generate `python/sqlite_rs/__init__.pyi` with `pyo3-stub-gen` rather than
+  keeping it by hand. It cannot infer the Arrow protocols, so some of it would
+  stay hand-written either way.
+- Move PyPI publishing to trusted publishing and drop `PYPI_API_TOKEN`.
+- Tidy the scripts that vendor `sqlite`, CPython's `sqlite` wrapper and the
+  typeshed stubs.

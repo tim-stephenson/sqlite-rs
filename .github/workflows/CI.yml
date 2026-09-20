@@ -442,7 +442,22 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-    needs: [linux, linux-aarch64, musllinux, musllinux-aarch64, windows, macos, sdist]
+    # The test jobs too, not just the builds: a wheel that compiles and
+    # cannot be imported is exactly what this has shipped before.
+    needs:
+      - linux
+      - linux-aarch64
+      - musllinux
+      - musllinux-aarch64
+      - windows
+      - macos
+      - sdist
+      - test-linux-x86_64
+      - test-linux-aarch64
+      - test-macos
+      - test-windows-x64
+      - test-musllinux-x86_64
+      - test-musllinux-aarch64
     permissions:
       id-token: write
       contents: write
