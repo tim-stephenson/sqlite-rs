@@ -115,9 +115,10 @@ a single call:
 pl.DataFrame(sqlite_rs.execute_and_fetch_table(conn, sql)).columns
 ```
 
-Neither form copies. At 10M rows across all four storage classes, building the
-frame off either one costs no measurable time and no measurable memory: polars
-adopts the buffers as they are.
+Neither form copies. At 10M rows across all four storage classes, with text
+and blobs on both sides of the length where Arrow stops packing a value into
+its view, building the frame off either one costs no measurable time and no
+measurable memory: polars adopts the buffers as they are.
 
 
 ## Development
@@ -141,8 +142,8 @@ add `--no-sync` to skip the rebuild once it is current.
 fetching a large table into polars against stdlib `sqlite3`'s `fetchall()`. It
 needs `maturin develop --release`; `sqlite_rs.DEBUG_BUILD` says which you have.
 `fetchall()` is where stdlib stops -- it is not charged for arranging its rows
-into anything. On one machine, 10M rows of a four-column STRICT table: 0.91s
-and 0.27 GB against 4.55s and 1.83 GB.
+into anything. On one machine, 10M rows of a four-column STRICT table: 0.97s
+and 0.47 GB against 4.46s and 2.45 GB.
 
 `bear -- cargo build` regenerates `compile_commands.json`, which clangd needs to
 resolve the vendored CPython headers in `native/`.

@@ -51,12 +51,23 @@ CREATE TABLE t (
 """
 # One statement per batch, generated inside SQLite: pushing 100M rows through
 # executemany() would measure Python's parameter binding, not the database.
+#
+# The text and blob lengths straddle 12 bytes on purpose: 4 to 27, a bit over a
+# third of them 12 or under. Arrow's view layout, which is what sqlite_rs
+# builds both as, packs anything that short into the view itself and sends the
+# rest to a data buffer. They are two different paths, and a fixture of
+# uniformly short values -- which this was -- only ever measures the first.
 FILL = """
 INSERT INTO t (i, r, s, b)
 WITH RECURSIVE seq(n) AS (
     SELECT ? UNION ALL SELECT n + 1 FROM seq WHERE n < ?
 )
-SELECT n, n * 1.5, 'row-' || n, randomblob(8) FROM seq
+SELECT
+    n,
+    n * 1.5,
+    substr(hex(randomblob(16)), 1, 4 + (n % 24)),
+    randomblob(4 + (n % 24))
+FROM seq
 """
 COLUMNS = ("i", "r", "s", "b")
 
