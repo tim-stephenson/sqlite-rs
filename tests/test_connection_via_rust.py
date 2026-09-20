@@ -64,6 +64,23 @@ def test_execute_and_fetch_all_reports_sql_errors() -> None:
         _ = sqlite_rs.execute_and_fetch_all(conn, "SELECT * FROM nonexistent")
 
 
+def test_execute_and_fetch_all_rejects_a_second_statement() -> None:
+    # sqlite3_prepare_v2 compiles the first statement and hands back the rest,
+    # so accepting this would run the SELECT and silently drop the INSERT.
+    conn = sqlite_rs.sqlite3.connect(":memory:")
+
+    with pytest.raises(ValueError, match="single statement"):
+        _ = sqlite_rs.execute_and_fetch_all(conn, "SELECT 1; SELECT 2")
+
+
+@pytest.mark.parametrize("sql", ["", "   ", "-- just a comment", "SELECT 1;"])
+def test_execute_and_fetch_all_accepts_sql_with_nothing_after_it(sql: str) -> None:
+    # A trailing semicolon, whitespace or comment leaves no second statement.
+    conn = sqlite_rs.sqlite3.connect(":memory:")
+
+    _ = sqlite_rs.execute_and_fetch_all(conn, sql)
+
+
 def test_rust_side_uses_the_same_sqlite_build_as_the_clone_module() -> None:
     """Guard on which libsqlite3 the Rust extension actually linked.
 
