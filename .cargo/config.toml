@@ -1,21 +1,20 @@
-# libsqlite3-sys hardcodes its link library name to `sqlite3`, but this
-# project's bundled SQLite is deliberately named libsqlite_rs_sqlite3 so it
-# cannot collide with CPython's own libsqlite3 under a loader that matches by
-# bare filename (see build.rs's shared_lib_name). Point it at a directory
-# build.rs fills with a `libsqlite3` symlink to the real thing: the linker
-# resolves -lsqlite3 through the symlink but records the target's
-# SONAME/install-name, so the runtime dependency stays collision-free.
+# Tell libsqlite3-sys where SQLite is, because left alone it finds a system
+# one and links that instead of the copy this project bundles:
 #
-# Set here rather than in build.rs because libsqlite3-sys's build script runs
-# first, as a dependency. It only reads these paths; nothing needs to exist
-# until link time, by which point build.rs has created it.
-# PKG_CONFIG_LIBDIR: libsqlite3-sys tries pkg-config before its own link
-# flags, and a system sqlite3.pc wins if one exists -- observed picking up
-# MacPorts' /opt/local/lib. Point pkg-config at an empty directory so it finds
-# nothing and falls through to SQLITE3_LIB_DIR below. This project links no
-# other pkg-config library.
+# - It hardcodes the link name `sqlite3`, while the bundled library is
+#   `libsqlite_rs_sqlite3` (shared_lib_name in build.rs says why). build.rs
+#   fills target/sqlite3-link with a `libsqlite3` symlink to it, so -lsqlite3
+#   resolves there while the recorded runtime dependency keeps the real name.
+# - It asks pkg-config first, and a system sqlite3.pc wins when one exists --
+#   MacPorts' /opt/local/lib, in practice. PKG_CONFIG_LIBDIR points at an
+#   empty directory so there is nothing for it to find.
+#
+# Here rather than in build.rs because libsqlite3-sys's build script runs
+# first, as a dependency. These are only read at link time, by which point
+# build.rs has created what they point at.
+#
+# https://github.com/rusqlite/rusqlite/tree/master/libsqlite3-sys
 [env]
 SQLITE3_LIB_DIR = { value = "target/sqlite3-link", relative = true }
 SQLITE3_INCLUDE_DIR = { value = "vendor/sqlite", relative = true }
 PKG_CONFIG_LIBDIR = { value = "target/sqlite3-link/no-pkg-config", relative = true }
-
