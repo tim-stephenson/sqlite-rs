@@ -60,6 +60,7 @@ the same way.
 | | |
 | --- | --- |
 | build | `uv run maturin develop --uv` |
+| build (release) | `uv run maturin develop --uv --release` |
 | test | `uv run pytest tests/` |
 | lint | `uv run ruff check . && uv run ruff format --check .` |
 | types | `uv run basedpyright . --warnings` |
@@ -68,4 +69,4 @@ the same way.
 | clangd | `bear -- cargo build` |
 | vendor SQLite | `uv run python scripts/vendor_sqlite.py [VERSION]` |
 | vendor CPython's `sqlite3` | `uv run python scripts/vendor_cpython.py [VERSION ...]` |
-| vendor typeshed stubs | `uv run python scripts/vendor_typeshed_sqlite3.py` |
+| vendor basedpyright stubs | `uv run python scripts/vendor_typeshed_sqlite3.py` |
