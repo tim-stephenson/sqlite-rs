@@ -13,19 +13,13 @@ performant Arrow interoperability.
 
 ## Performance
 
-Ten million rows of a four-column table, read into a polars `DataFrame` --
-seconds and peak memory, each row measured on one GitHub runner:
+Query: `SELECT i, r, s, b FROM t` over 10,000,000 rows, into a polars `DataFrame`.
 
 | | sqlite_rs | adbc | stdlib `sqlite3` |
 | --- | --- | --- | --- |
-| macOS, arm64 | **1.94s** / 0.79 GB | 4.65s / 1.27 GB | 9.45s / 2.74 GB |
-| Linux, x86-64 | **1.85s** / 0.81 GB | 4.09s / 1.74 GB | 7.86s / 2.76 GB |
-| Windows, x86-64 | **1.60s** / 0.80 GB | 2.13s / 1.49 GB | 8.27s / 2.81 GB |
-
-stdlib is let off lightest of the three: `fetchall()` is where it stops, so it
-is never charged for building the frame at all. Compare down a column, not
-across -- a runner's own speed moves by up to 2x between runs, so only the
-three that shared a machine are comparable.
+| macOS, arm64 | **1.94s** / 5,161,686 rows/s / 0.79 GB | 4.65s / 2,151,119 rows/s / 1.27 GB | 9.45s / 1,057,731 rows/s / 2.74 GB |
+| Linux, x86-64 | **1.85s** / 5,403,427 rows/s / 0.81 GB | 4.09s / 2,446,516 rows/s / 1.74 GB | 7.86s / 1,271,890 rows/s / 2.76 GB |
+| Windows, x86-64 | **1.60s** / 6,267,934 rows/s / 0.80 GB | 2.13s / 4,702,584 rows/s / 1.49 GB | 8.27s / 1,208,718 rows/s / 2.81 GB |
 
 ## Opinionated Installation Choices
 
