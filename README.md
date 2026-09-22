@@ -13,7 +13,7 @@ performant Arrow interoperability.
 
 ## Performance
 
-Query: `SELECT i, r, s, b FROM t` over 10,000,000 rows, into a polars `DataFrame`.
+Query:
 
 | | sqlite_rs | adbc | stdlib `sqlite3` |
 | --- | --- | --- | --- |
@@ -49,16 +49,13 @@ table = pl.DataFrame(sqlite_rs.execute_and_fetch_table(conn, "SELECT * FROM t"))
 
 ## AI policy
 
-All of the code in this repository was written by an LLM. A human directed it
+Almost all of the code in this repository was written by an LLM. A human directed it
 throughout: the higher-level structure and the design choices are theirs, and
 the LLM wrote the code that followed from them. This documentation was written
 the same way.
 
 
 ## Development
-
-Needs Rust 1.98 or newer (see `rust-version` in Cargo.toml for why) and
-[uv](https://docs.astral.sh/uv/).
 
 | | |
 | --- | --- |

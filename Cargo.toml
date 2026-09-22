@@ -2,17 +2,8 @@
 name = "sqlite-rs"
 version = "0.1.0"
 edition = "2024"
-# Older toolchains write a Mach-O whose string table follows the indirect
-# symbol table unpadded, which macOS 27's dyld rejects outright whenever the
-# symbol count is odd ("mis-aligned LINKEDIT string pool"). Half of all builds,
-# by chance. Fixed in 1.98 (rust-lang/rust#157750).
 rust-version = "1.98"
 license = "MIT"
-# Not published to crates.io -- this crate only ever gets compiled into the
-# _core extension module and shipped inside a Python wheel. These are here
-# because maturin builds the sdist by shelling out to `cargo package --list`,
-# and Cargo warns on every such run when a manifest carries none of
-# description/documentation/homepage/repository.
 description = "A drop-in superset of Python's sqlite3 bindings, extended with Rust for performant Arrow interoperability."
 repository = "https://github.com/tim-stephenson/sqlite-rs"
 
@@ -27,8 +18,7 @@ arrow-cast = "59"
 arrow-schema = "59"
 pyo3 = "0.29.0"
 pyo3-arrow = "0.19.0"
-# default-features = false: the defaults pull a wasm toolchain we never use.
-rusqlite = { version = "0.40.2", default-features = false }
+rusqlite = { version = "0.40.2", default-features = false } # default-features = false: the defaults pull a wasm toolchain we never use.
 
 [build-dependencies]
 cc = "1"
