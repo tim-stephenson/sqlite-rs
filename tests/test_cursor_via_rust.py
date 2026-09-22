@@ -144,11 +144,13 @@ def test_a_cursor_with_no_rows_left_fetches_nothing_rather_than_raising(
     # All three leave the cursor with no statement, which this used to report
     # as "cursor has no underlying sqlite3_stmt*". None of them is a fault:
     # the cursor's own fetchall() returns [] for every one, and so must this.
+    #
+    # A cursor each. Sharing one would have fetchall() reach fetch_all first,
+    # and the case this was reported for is a cursor nothing has read from.
     conn = _conn()
-    cursor = make_cursor(conn)
-    assert cursor.fetchall() == []
 
-    columns = sqlite_rs.fetch_all(cursor)
+    assert make_cursor(conn).fetchall() == []
+    columns = sqlite_rs.fetch_all(make_cursor(conn))
 
     assert [au.name(c) for c in columns] == expected_names
     assert all(len(c) == 0 for c in columns)
@@ -243,12 +245,13 @@ def test_cursor_functions_reject_a_stdlib_cursor() -> None:
 def test_a_cursor_that_never_executed_has_nothing_to_give() -> None:
     # No statement and no description, so no columns -- which is what its own
     # fetchall() says too. A pointer is the one thing that cannot be given.
-    cur = _conn().cursor()
+    # One cursor per call, so none of them is reading after another.
+    conn = _conn()
 
-    assert cur.fetchall() == []
-    assert sqlite_rs.fetch_all(cur) == []
+    assert conn.cursor().fetchall() == []
+    assert sqlite_rs.fetch_all(conn.cursor()) == []
     with pytest.raises(ValueError, match="no rows left"):
-        _ = sqlite_rs.get_raw_stmt_ptr(cur)
+        _ = sqlite_rs.get_raw_stmt_ptr(conn.cursor())
 
 
 def test_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> None:
