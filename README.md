@@ -9,6 +9,8 @@
 A drop-in superset of Python's `sqlite3` bindings, extended with Rust for
 performant Arrow interoperability.
 
+## Performance
+
 Ten million rows of a four-column table, read into a polars `DataFrame` --
 seconds and peak memory, each row measured on one GitHub runner:
 
@@ -23,31 +25,30 @@ is never charged for building the frame at all. Compare down a column, not
 across -- a runner's own speed moves by up to 2x between runs, so only the
 three that shared a machine are comparable.
 
-`sqlite_rs.sqlite3` is a from-scratch build of CPython's own `sqlite3` module,
-used exactly like it. On top of that, `sqlite_rs` adds Rust functions that read
-the *same* live connection and hand back Arrow columns instead of rows of
-Python objects.
+## Opinionated Installation Choices
+
+- `sqlite_rs` bundles a vendored dynamically linkable SQLite library. (`libsqlite_rs_sqlite3.so`, `libsqlite_rs_sqlite3.dylib`, or `libsqlite_rs_sqlite3.dll`)
+- `sqlite_rs` bundles a vendored cpython `sqlite3` module (matching the python version) which dynamically links to the bundled SQLite library.
+- `sqlite_rs` bundles functions with native performance and Arrow interoperability which dynamically links to the bundled SQLite library, utilizing the known struct offsets from the vendored `sqlite3` (e.g. `sqlite_rs.sqlite3`) to extract the relevant SQLite references.
+
+## Quick Start
+
+`sqlite_rs.sqlite3` is a drop in replacement for the built in `sqlite3` library,
+because it is, line for line, the exact same code, vendored from the cpython library.
+However, using `sqlite_rs.sqlite3` instead allows passing a `Connection` or `Cursor`
+to the blazing fast Arrow interoperable functions apart of `sqlite_rs`.
 
 ```python
 import polars as pl
 import sqlite_rs
-import sqlite_rs.sqlite3
+import sqlite_rs.sqlite3 as sqlite3
 
-conn = sqlite_rs.sqlite3.connect("example.db")  # exactly like stdlib sqlite3
+conn = sqlite3.connect("example.db")
 conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
 conn.execute("INSERT INTO t VALUES (1, 'x')")
 
-# Every result column, named, and copied into polars nowhere.
-table = sqlite_rs.execute_and_fetch_table(conn, "SELECT * FROM t")
-pl.DataFrame(table)
+table = pl.DataFrame(sqlite_rs.execute_and_fetch_table(conn, "SELECT * FROM t"))
 ```
-
-Supported on CPython 3.11-3.15, including free-threaded 3.15t, for Linux
-(glibc and musl), macOS and Windows.
-
-Documentation, with a quick start, the API and the benchmarks in full:
-<https://tim-stephenson.github.io/sqlite-rs/>. To work on it locally,
-`uv run sphinx-autobuild docs/source docs/build`.
 
 
 ## AI policy
