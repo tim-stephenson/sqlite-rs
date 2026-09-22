@@ -5,8 +5,8 @@ Usage:
     python scripts/vendor_cpython.py [VERSION ...]
 
 With no arguments, auto-discovers the --count (default 5) most recent
-CPython minor versions that have at least one final release, resolves each
-to its latest patch release, and (re-)vendors all of them. With one or more
+CPython minor versions that have reached a release candidate, resolves
+each to its latest release, and (re-)vendors all of them. With one or more
 explicit VERSION arguments (e.g. "3.14.3"), vendors exactly those versions
 instead -- each pinned into the subdirectory for its own minor version,
 leaving any other already-vendored minor versions untouched.
@@ -61,7 +61,11 @@ SUBTREES = [
     ("Lib/sqlite3", "Lib/sqlite3", {"__init__.py", "dbapi2.py", "dump.py"}),
 ]
 
-RELEASE_TAG_RE = re.compile(r"^refs/tags/v3\.(\d+)\.(\d+)$")
+# Final releases and release candidates, but not alphas or betas. A candidate
+# is feature-frozen, so the sources it carries are what the final will ship,
+# and waiting for the final would leave the newest Python unvendorable for
+# months. Matches v3.15.0 and v3.15.0rc1; not v3.15.0a1 or v3.15.0b2.
+RELEASE_TAG_RE = re.compile(r"^refs/tags/v3\.(\d+)\.(\d+)(?:rc(\d+))?$")
 
 
 def api_get(url: str) -> object:
@@ -85,20 +89,28 @@ def resolve_commit(tag: str) -> str:
 def discover_latest_versions(count: int) -> dict[str, str]:
     """Return the `count` most recent CPython 3.x minor versions.
 
-    Maps "3.<minor>" to "3.<minor>.<latest patch>" for each. Skips
-    alpha/beta/rc/pre-release tags, which don't match RELEASE_TAG_RE.
+    Maps "3.<minor>" to its latest release, counting release candidates, so a
+    minor version that has not had a final yet is still vendorable. Within one
+    minor version a final outranks every candidate of the same patch, and a
+    later candidate outranks an earlier one.
     """
     refs = api_get(f"https://api.github.com/repos/{REPO}/git/matching-refs/tags/v3.")
-    latest_patch: dict[int, int] = {}
+    latest: dict[int, tuple[tuple[int, int, int], str]] = {}
     for entry in cast("list[dict[str, str]]", refs):
         match = RELEASE_TAG_RE.match(entry["ref"])
         if not match:
             continue
         minor, patch = int(match.group(1)), int(match.group(2))
-        if patch > latest_patch.get(minor, -1):
-            latest_patch[minor] = patch
-    top_minors = sorted(latest_patch, reverse=True)[:count]
-    return {f"3.{minor}": f"3.{minor}.{latest_patch[minor]}" for minor in top_minors}
+        candidate = match.group(3)
+        if candidate is None:
+            rank, version = (patch, 1, 0), f"3.{minor}.{patch}"
+        else:
+            rank = (patch, 0, int(candidate))
+            version = f"3.{minor}.{patch}rc{candidate}"
+        if minor not in latest or rank > latest[minor][0]:
+            latest[minor] = (rank, version)
+    top_minors = sorted(latest, reverse=True)[:count]
+    return {f"3.{minor}": latest[minor][1] for minor in top_minors}
 
 
 def clear_dir(dest: Path) -> None:
