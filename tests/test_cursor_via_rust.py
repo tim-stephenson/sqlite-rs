@@ -8,6 +8,7 @@ is a prepared statement, so `get_raw_stmt_ptr` hands out a `sqlite3_stmt*`.
 
 import ctypes
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 
 import arrow_util as au
@@ -110,12 +111,67 @@ def test_fetch_all_resumes_from_the_cursor_position() -> None:
     assert au.rows(sqlite_rs.fetch_all(cur)) == [[2], [3]]
 
 
-def test_fetch_all_on_an_exhausted_cursor_reports_no_statement() -> None:
-    cur = _conn().execute("SELECT * FROM t")
-    assert cur.fetchall() == _ROWS
+def _zero_row_select(conn: sqlite_rs.sqlite3.Connection) -> sqlite_rs.sqlite3.Cursor:
+    """Released inside execute(): it steps once, gets SQLITE_DONE, and is done."""
+    return conn.execute("SELECT a, b FROM t WHERE 0")
 
-    # CPython releases the statement once its own iteration completes.
-    with pytest.raises(ValueError, match="no underlying sqlite3_stmt"):
+
+def _already_drained(conn: sqlite_rs.sqlite3.Connection) -> sqlite_rs.sqlite3.Cursor:
+    """Released when the cursor's own iteration reached the end."""
+    cursor = conn.execute("SELECT a, b FROM t")
+    _ = cursor.fetchall()
+    return cursor
+
+
+def _no_result_columns(conn: sqlite_rs.sqlite3.Connection) -> sqlite_rs.sqlite3.Cursor:
+    """Never had rows to give, and no description either."""
+    return conn.execute("INSERT INTO t VALUES (4, 'w')")
+
+
+@pytest.mark.parametrize(
+    ("make_cursor", "expected_names"),
+    [
+        (_zero_row_select, ["a", "b"]),
+        (_already_drained, ["a", "b"]),
+        (_no_result_columns, []),
+    ],
+    ids=["zero-row SELECT", "already-drained cursor", "INSERT"],
+)
+def test_a_cursor_with_no_rows_left_fetches_nothing_rather_than_raising(
+    make_cursor: Callable[[sqlite_rs.sqlite3.Connection], sqlite_rs.sqlite3.Cursor],
+    expected_names: list[str],
+) -> None:
+    # All three leave the cursor with no statement, which this used to report
+    # as "cursor has no underlying sqlite3_stmt*". None of them is a fault:
+    # the cursor's own fetchall() returns [] for every one, and so must this.
+    conn = _conn()
+    cursor = make_cursor(conn)
+    assert cursor.fetchall() == []
+
+    columns = sqlite_rs.fetch_all(cursor)
+
+    assert [au.name(c) for c in columns] == expected_names
+    assert all(len(c) == 0 for c in columns)
+    # No values to infer from, so no type -- as for any query returning none.
+    assert all(au.dtype(c) == "null" for c in columns)
+
+
+def test_fetch_table_on_a_query_matching_nothing_returns_no_rows() -> None:
+    conn = _conn()
+
+    table = sqlite_rs.fetch_table(conn.execute("SELECT a, b FROM t WHERE 0"))
+
+    assert table.column_names == ["a", "b"]
+    assert table.shape == (0, 2)
+
+
+def test_fetch_all_on_a_closed_cursor_is_an_error() -> None:
+    # Unlike having no rows left, this one a caller cannot recover from, and
+    # the cursor's own fetchall() raises for it too.
+    cur = _conn().execute("SELECT * FROM t")
+    cur.close()
+
+    with pytest.raises(ValueError, match="closed"):
         _ = sqlite_rs.fetch_all(cur)
 
 
@@ -184,12 +240,15 @@ def test_cursor_functions_reject_a_stdlib_cursor() -> None:
             _ = call(stdlib_cur)  # pyright: ignore[reportArgumentType]
 
 
-def test_cursor_functions_reject_a_cursor_that_never_executed() -> None:
+def test_a_cursor_that_never_executed_has_nothing_to_give() -> None:
+    # No statement and no description, so no columns -- which is what its own
+    # fetchall() says too. A pointer is the one thing that cannot be given.
     cur = _conn().cursor()
 
-    for call in (sqlite_rs.fetch_all, sqlite_rs.get_raw_stmt_ptr):
-        with pytest.raises(ValueError, match="no underlying sqlite3_stmt"):
-            _ = call(cur)
+    assert cur.fetchall() == []
+    assert sqlite_rs.fetch_all(cur) == []
+    with pytest.raises(ValueError, match="no rows left"):
+        _ = sqlite_rs.get_raw_stmt_ptr(cur)
 
 
 def test_fetch_all_via_raw_pointer_accepts_a_ctypes_pointer() -> None:

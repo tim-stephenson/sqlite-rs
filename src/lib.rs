@@ -16,6 +16,10 @@ mod shim {
     unsafe extern "C" {
         pub fn sqlite_rs_get_connection_db(conn: *mut pyffi::PyObject) -> *mut ffi::sqlite3;
         pub fn sqlite_rs_get_cursor_stmt(cursor: *mut pyffi::PyObject) -> *mut ffi::sqlite3_stmt;
+        /// Whether `close()` has been called. A cursor with no statement is
+        /// ordinary -- it has no rows left -- so this is what separates that
+        /// from one that cannot be read at all.
+        pub fn sqlite_rs_cursor_is_closed(cursor: *mut pyffi::PyObject) -> std::os::raw::c_int;
         /// Reset and release the cursor's statement, restoring the invariant
         /// `pysqlite_cursor_iternext` asserts: a non-NULL statement is
         /// positioned on a row.
@@ -113,7 +117,12 @@ mod _core {
     /// `execute_and_fetch_all`.
     #[pyfunction]
     fn get_raw_stmt_ptr(py: Python<'_>, cursor: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
-        c_void_p(py, cursor_stmt(py, &cursor)? as usize)
+        // Unlike a fetch, there is no empty answer to give here: a cursor with
+        // no rows left has no statement to point at.
+        let stmt = cursor_stmt(py, &cursor)?.ok_or_else(|| {
+            PyValueError::new_err("cursor has no rows left, so no sqlite3_stmt* to point at")
+        })?;
+        c_void_p(py, stmt as usize)
     }
 
     /// Drain `cursor`'s statement and return its columns, decoded exactly as
@@ -162,7 +171,9 @@ mod _core {
 
     /// Drain `cursor`'s statement, leaving the cursor fit to be reused.
     fn drain_cursor(py: Python<'_>, cursor: &Bound<'_, PyAny>) -> PyResult<Columns> {
-        let stmt = cursor_stmt(py, cursor)?;
+        let Some(stmt) = cursor_stmt(py, cursor)? else {
+            return exhausted_columns(cursor);
+        };
         let columns = collect_rows(stmt);
         // Unconditionally, including on error: a drained statement left in
         // place would abort the interpreter on the cursor's next use.
@@ -456,15 +467,37 @@ mod _core {
         Ok(db)
     }
 
-    fn cursor_stmt(py: Python<'_>, cursor: &Bound<'_, PyAny>) -> PyResult<*mut ffi::sqlite3_stmt> {
+    /// The statement `cursor` is positioned on, or `None` when it has no rows
+    /// left.
+    ///
+    /// CPython releases a cursor's statement as soon as stepping it reaches
+    /// SQLITE_DONE, which for a query matching nothing happens inside
+    /// `execute()` itself. So no statement is the ordinary state of an
+    /// exhausted cursor, not a fault, and `fetchall()` returns `[]` for it.
+    fn cursor_stmt(py: Python<'_>, cursor: &Bound<'_, PyAny>) -> PyResult<Option<*mut ffi::sqlite3_stmt>> {
         require_own(py, cursor, "Cursor", "sqlite_rs.sqlite3")?;
-        let stmt = unsafe { shim::sqlite_rs_get_cursor_stmt(cursor.as_ptr()) };
-        if stmt.is_null() {
-            return Err(PyValueError::new_err(
-                "cursor has no underlying sqlite3_stmt* (has it executed a statement, and is \
-                 it still open?)",
-            ));
+        if unsafe { shim::sqlite_rs_cursor_is_closed(cursor.as_ptr()) } != 0 {
+            return Err(PyValueError::new_err("cursor is closed"));
         }
-        Ok(stmt)
+        let stmt = unsafe { shim::sqlite_rs_get_cursor_stmt(cursor.as_ptr()) };
+        Ok((!stmt.is_null()).then_some(stmt))
+    }
+
+    /// The columns of a cursor that has no rows left: none at all for a
+    /// statement that returns no columns, and named but empty otherwise.
+    ///
+    /// The names come from `description`, which the cursor keeps after its
+    /// statement is gone. There is nothing left to infer a type from, so each
+    /// column is Arrow null -- the same as a query that returns no rows.
+    fn exhausted_columns(cursor: &Bound<'_, PyAny>) -> PyResult<Columns> {
+        let description = cursor.getattr("description")?;
+        let mut names: Vec<String> = Vec::new();
+        if !description.is_none() {
+            for column in description.try_iter()? {
+                names.push(column?.get_item(0)?.extract()?);
+            }
+        }
+        let builders = (0..names.len()).map(|_| ColumnBuilder::default()).collect();
+        Ok(Columns { builders, names })
     }
 }

@@ -27,6 +27,14 @@ sqlite3_stmt *sqlite_rs_get_cursor_stmt(PyObject *cursor) {
     return statement == NULL ? NULL : statement->st;
 }
 
+// A cursor whose statement is NULL is the normal state for one that has no
+// rows left -- CPython releases the statement the moment it steps to
+// SQLITE_DONE, which for a query matching nothing happens inside execute().
+// Only `closed` distinguishes that from a cursor that cannot be read at all.
+int sqlite_rs_cursor_is_closed(PyObject *cursor) {
+    return *(int *)((char *)cursor + offsetof(pysqlite_Cursor, closed));
+}
+
 // Leave `cursor` exactly as CPython leaves it once its own iteration hits
 // SQLITE_DONE: statement reset and released. pysqlite_cursor_iternext asserts
 // that a non-NULL statement is positioned on a row
