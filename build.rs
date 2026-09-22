@@ -571,7 +571,7 @@ fn materialize_lib_sqlite3(vendor_lib_sqlite3_dir: &Path, out_dir: &Path) {
 /// `_sqlite3.pyi`/`sqlite3/{__init__,dbapi2,dump}.pyi` into `python/sqlite_rs/sqlite3/`,
 /// applying the same `SELF_REFERENTIAL_IMPORT_REWRITES` as `materialize_lib_sqlite3`
 /// above -- these stubs describe the same source and carry the identical
-/// self-referential absolute imports (see scripts/vendor_typeshed_sqlite3.py).
+/// self-referential absolute imports (see scripts/vendor_basedpyright_stubs.py).
 fn materialize_typeshed_sqlite3(vendor_typeshed_dir: &Path, out_dir: &Path) {
     let stdlib = vendor_typeshed_dir.join("stdlib");
     let files = [

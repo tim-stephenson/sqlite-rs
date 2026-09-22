@@ -2,7 +2,7 @@
 """Vendor basedpyright's typeshed sqlite3/_sqlite3 stubs, unmodified, into vendor/typeshed/.
 
 Usage:
-    python scripts/vendor_typeshed_sqlite3.py
+    python scripts/vendor_basedpyright_stubs.py
 
 Sourced from the `basedpyright` package installed in this project's dev
 dependency group (see pyproject.toml) -- its bundled typeshed-fallback is

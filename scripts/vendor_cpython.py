@@ -29,7 +29,7 @@ pinned tag -- nothing here is patched or regenerated:
   self-referential absolute imports (`from sqlite3.dbapi2 import ...` etc.)
   to point at that nested location -- see build.rs's
   `rewrite_self_imports`, which uses the exact same substitutions as
-  scripts/vendor_typeshed_sqlite3.py applies to the corresponding stubs.
+  scripts/vendor_basedpyright_stubs.py applies to the corresponding stubs.
 
 A MANIFEST recording the resolved commit SHA is written alongside each
 vendored minor version, for provenance. CPython's own top-level LICENSE

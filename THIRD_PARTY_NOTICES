@@ -33,7 +33,7 @@ commit each version is pinned to -- see scripts/vendor_cpython.py).
 typeshed's sqlite3/_sqlite3 stubs (vendor/typeshed/)
 -----------------------------------------------------
 Vendored from basedpyright's bundled typeshed-fallback (see
-scripts/vendor_typeshed_sqlite3.py). These .pyi files carry no per-file
+scripts/vendor_basedpyright_stubs.py). These .pyi files carry no per-file
 header; typeshed's repository is licensed under the Apache License,
 Version 2.0 (with some individual files under the MIT License), the full
 text of which is vendored at vendor/typeshed/LICENSE.

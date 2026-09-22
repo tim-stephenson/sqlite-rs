@@ -69,4 +69,4 @@ the same way.
 | clangd | `bear -- cargo build` |
 | vendor SQLite | `uv run python scripts/vendor_sqlite.py [VERSION]` |
 | vendor CPython's `sqlite3` | `uv run python scripts/vendor_cpython.py [VERSION ...]` |
-| vendor basedpyright stubs | `uv run python scripts/vendor_typeshed_sqlite3.py` |
+| vendor basedpyright stubs | `uv run python scripts/vendor_basedpyright_stubs.py` |
