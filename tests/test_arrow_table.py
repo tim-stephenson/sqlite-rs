@@ -73,12 +73,22 @@ def test_statement_with_no_result_columns_is_an_empty_table() -> None:
 
 
 def test_empty_result_keeps_its_columns() -> None:
+    # As with the list form: no rows means no type to infer, so the schema is
+    # all Arrow null. What the table still has to get right is the names and
+    # the shape -- one column per result column, zero rows.
     conn = _connection()
 
     table = sqlite_rs.execute_and_fetch_table(conn, "SELECT a, b FROM t WHERE 0")
 
     assert table.column_names == ["a", "b"]
-    assert table.num_rows == 0
+    assert table.shape == (0, 2)
+    assert au.fields(table) == [("a", "null"), ("b", "null")]
+
+    # The same query with its rows, for contrast.
+    assert au.fields(sqlite_rs.execute_and_fetch_table(conn, "SELECT a, b FROM t")) == [
+        ("a", "int64"),
+        ("b", "utf8_view"),
+    ]
 
 
 def test_raw_pointers_reach_the_same_table() -> None:

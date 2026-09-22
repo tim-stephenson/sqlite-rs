@@ -75,6 +75,50 @@ def _read_schema(array: ArrowArray) -> tuple[str, str]:
     return result
 
 
+class ArrowSchemaExportable(Protocol):
+    def __arrow_c_schema__(self) -> object: ...
+
+
+def fields(exportable: ArrowSchemaExportable) -> list[tuple[str, str]]:
+    """(name, type) for each field of a table, from its exported schema.
+
+    A table exports one struct schema whose children are its columns, so
+    reading the columns means walking into `children` -- all of it copied out
+    before the capsule goes, for the reason `_read_schema` gives.
+    """
+    capsule = exportable.__arrow_c_schema__()
+    get_pointer = ctypes.pythonapi.PyCapsule_GetPointer
+    get_pointer.restype = ctypes.c_void_p
+    get_pointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
+    pointer = cast("int", get_pointer(capsule, b"arrow_schema"))
+    schema = ctypes.cast(pointer, ctypes.POINTER(_ArrowSchema)).contents
+
+    # ctypes hands struct fields back untyped; `children` is an ArrowSchema**,
+    # walked here one address at a time so each child goes through the same
+    # cast-and-dereference as the schema above. A result with no columns has
+    # no children array at all.
+    children = cast("int | None", schema.children)
+    n_children = cast("int", schema.n_children)
+    result: list[tuple[str, str]] = []
+    if children is None:
+        del capsule
+        return result
+
+    addresses = ctypes.cast(children, ctypes.POINTER(ctypes.c_void_p))
+    for i in range(n_children):
+        address = cast("int | None", addresses[i])
+        if address is None:
+            continue
+        child = ctypes.cast(address, ctypes.POINTER(_ArrowSchema)).contents
+        raw_name = cast("bytes | None", child.name)
+        raw_format = cast("bytes | None", child.format)
+        name = raw_name.decode() if raw_name else ""
+        fmt = raw_format.decode() if raw_format else ""
+        result.append((name, _FORMATS.get(fmt, fmt)))
+    del capsule
+    return result
+
+
 def dtype(array: ArrowArray) -> str:
     """Return the Arrow type as a readable name, via the exported schema."""
     fmt, _ = _read_schema(array)

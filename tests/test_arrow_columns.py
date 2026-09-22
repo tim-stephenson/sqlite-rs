@@ -165,14 +165,29 @@ def test_a_wide_row_keeps_every_value_in_its_own_column() -> None:
     ]
 
 
-def test_empty_result_has_columns_but_no_rows() -> None:
+def test_empty_result_keeps_its_names_and_has_no_type_to_infer() -> None:
+    # A column's type comes from the values in it, never from what the table
+    # declares, so a query matching no rows has nothing to go on and every
+    # column is Arrow null. The names still have to be right: they are what a
+    # caller lines the columns up by, and they are all an empty result has.
     conn = sqlite_rs.sqlite3.connect(":memory:")
-    _ = conn.execute("CREATE TABLE t (a INTEGER, b TEXT)")
+    _ = conn.execute("CREATE TABLE t (a INTEGER, b TEXT, c REAL, d BLOB)")
+    _ = conn.execute("INSERT INTO t VALUES (1, 'x', 2.5, x'00')")
 
-    columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT a, b FROM t")
+    columns = sqlite_rs.execute_and_fetch_all(conn, "SELECT a, b, c, d FROM t WHERE 0")
 
-    assert [au.name(c) for c in columns] == ["a", "b"]
+    assert [au.name(c) for c in columns] == ["a", "b", "c", "d"]
     assert all(len(c) == 0 for c in columns)
+    assert [au.dtype(c) for c in columns] == ["null"] * 4
+
+    # The same four columns, once a row exists to type them.
+    typed = sqlite_rs.execute_and_fetch_all(conn, "SELECT a, b, c, d FROM t")
+    assert [au.dtype(c) for c in typed] == [
+        "int64",
+        "utf8_view",
+        "float64",
+        "binary_view",
+    ]
 
 
 def test_statement_with_no_result_columns_returns_nothing() -> None:
