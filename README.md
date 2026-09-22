@@ -72,6 +72,36 @@ Needs Rust 1.98 or newer (see `rust-version` in Cargo.toml for why) and
 | docs | `uv run sphinx-autobuild docs/source docs/build` |
 | bench | `uv run python scripts/benchmark_fetch_all.py` |
 
+### Vendoring
+
+`vendor/` holds third-party source, pulled by these and never edited by hand.
+Each is idempotent: re-running one with no arguments rewrites what is already
+pinned, so a clean `git status` afterwards means the tree and the pin agree.
+
+| | |
+| --- | --- |
+| SQLite | `uv run python scripts/vendor_sqlite.py [VERSION]` |
+| CPython's `sqlite3` | `uv run python scripts/vendor_cpython.py [VERSION ...]` |
+| typeshed stubs | `uv run python scripts/vendor_typeshed_sqlite3.py` |
+
+`vendor_sqlite.py` with no argument re-vendors whatever `vendor/sqlite/VERSION`
+pins; with one (`3.53.4`) it pins and vendors that instead. The download URL
+and its checksum come from sqlite.org's own machine-readable product data, so
+bumping a version never means editing the script.
+
+`vendor_cpython.py` keeps a subtree per minor version, because the vendored
+`Modules/_sqlite/*.c` reach into CPython internals that are not stable between
+them. Given versions (`3.14.3`) it vendors exactly those, leaving the rest
+alone. Given none it takes the five most recent minor versions that have a
+final release -- which is not necessarily the set this project supports, and
+will quietly drop the oldest once a new one lands, so pass them explicitly
+unless you mean to move the floor.
+
+`vendor_typeshed_sqlite3.py` takes no arguments. It lifts the `sqlite3` stubs
+out of the installed basedpyright, recording which version and which typeshed
+commit in `vendor/typeshed/MANIFEST`, so the stubs the type checker uses for
+`sqlite_rs.sqlite3` are the ones it ships for the real thing.
+
 `maturin develop` is the whole build: `build.rs` compiles the vendored SQLite
 and CPython `_sqlite` sources, materializes `python/sqlite_rs/sqlite3/` from
 `vendor/`, then builds `_core`. Every `uv run` re-syncs the project first, so
