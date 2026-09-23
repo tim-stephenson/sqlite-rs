@@ -63,7 +63,7 @@ mod _core {
     /// a SQL error, or SQL holding more than one statement.
     #[pyfunction]
     fn execute_and_fetch_all(connection: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
-        Ok(run_query(connection_db(&connection)?, sql)?.into_arrays())
+        Ok(run_query(connection.py(), connection_db(&connection)?, sql)?.into_arrays())
     }
 
     /// `execute_and_fetch_all`, as one table rather than a list of columns.
@@ -74,7 +74,7 @@ mod _core {
     /// of arrays has to be assembled column by column.
     #[pyfunction]
     fn execute_and_fetch_table(connection: Bound<'_, PyAny>, sql: &str) -> PyResult<PyTable> {
-        run_query(connection_db(&connection)?, sql)?.into_table()
+        run_query(connection.py(), connection_db(&connection)?, sql)?.into_table()
     }
 
     /// Run `sql` once per row of `data`, binding each row's values to its
@@ -98,7 +98,7 @@ mod _core {
     /// statement's parameters.
     #[pyfunction]
     fn execute_many(connection: Bound<'_, PyAny>, sql: &str, data: AnyRecordBatch) -> PyResult<i64> {
-        run_many(connection_db(&connection)?, sql, data)
+        run_many(connection.py(), connection_db(&connection)?, sql, data)
     }
 
     /// `execute_many` against a `sqlite3*` the caller already holds.
@@ -108,7 +108,7 @@ mod _core {
         sql: &str,
         data: AnyRecordBatch,
     ) -> PyResult<i64> {
-        run_many(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql, data)
+        run_many(db_ptr.py(), raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql, data)
     }
 
     /// Return the `sqlite3*` backing `connection` as a `ctypes.c_void_p`.
@@ -134,13 +134,14 @@ mod _core {
     /// rejected.
     #[pyfunction]
     fn execute_and_fetch_all_via_raw_pointer(db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<Vec<PyArray>> {
-        Ok(run_query(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)?.into_arrays())
+        Ok(run_query(db_ptr.py(), raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)?
+            .into_arrays())
     }
 
     /// `execute_and_fetch_all_via_raw_pointer`, as one table.
     #[pyfunction]
     fn execute_and_fetch_table_via_raw_pointer(db_ptr: Bound<'_, PyAny>, sql: &str) -> PyResult<PyTable> {
-        run_query(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)?.into_table()
+        run_query(db_ptr.py(), raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql)?.into_table()
     }
 
     /// Return the `sqlite3_stmt*` backing `cursor` as a `ctypes.c_void_p`,
@@ -197,13 +198,15 @@ mod _core {
     /// leaves the cursor correctly exhausted.
     #[pyfunction]
     fn fetch_all_via_raw_pointer(stmt_ptr: Bound<'_, PyAny>) -> PyResult<Vec<PyArray>> {
-        Ok(collect_rows(raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)?.into_arrays())
+        Ok(collect_rows(stmt_ptr.py(), raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)?
+            .into_arrays())
     }
 
     /// `fetch_all_via_raw_pointer`, as one table.
     #[pyfunction]
     fn fetch_table_via_raw_pointer(stmt_ptr: Bound<'_, PyAny>) -> PyResult<PyTable> {
-        collect_rows(raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)?.into_table()
+        collect_rows(stmt_ptr.py(), raw_pointer(&stmt_ptr, "stmt_ptr")? as *mut ffi::sqlite3_stmt)?
+            .into_table()
     }
 
     /// Drain `cursor`'s statement, leaving the cursor fit to be reused.
@@ -211,7 +214,7 @@ mod _core {
         let Some(stmt) = cursor_stmt(py, cursor)? else {
             return exhausted_columns(cursor);
         };
-        let columns = collect_rows(stmt);
+        let columns = collect_rows(py, stmt);
         // Unconditionally, including on error: a drained statement left in
         // place would abort the interpreter on the cursor's next use.
         unsafe { shim::sqlite_rs_cursor_release_stmt(cursor.as_ptr()) };
@@ -295,6 +298,33 @@ mod _core {
             .collect()
     }
 
+    /// A raw SQLite handle carried across a GIL release.
+    ///
+    /// `*mut` is not `Send`, so a handle cannot enter a `detach` closure on
+    /// its own. These belong to the caller's connection or cursor, stay valid
+    /// for the length of the call and reach no Python object, so moving one
+    /// across is sound. What makes releasing the GIL safe in the first place
+    /// is that the bundled SQLite is built multi-thread: a connection is
+    /// already documented as not shareable between threads, so there is no
+    /// second thread entitled to touch these while they are in use.
+    #[derive(Clone, Copy)]
+    struct Handle<T>(*mut T);
+
+    // SAFETY: see the type's doc comment.
+    unsafe impl<T> Send for Handle<T> {}
+
+    impl<T> Handle<T> {
+        /// The pointer back out, inside the closure that released the GIL.
+        ///
+        /// A method rather than reaching for `.0` directly: under the 2021
+        /// closure capture rules a field access captures just that field, so
+        /// the closure would try to carry the bare `*mut` -- which is exactly
+        /// what is not `Send` -- instead of this wrapper.
+        fn get(self) -> *mut T {
+            self.0
+        }
+    }
+
     /// Run one statement without reading anything back, for savepoints.
     fn exec(db: *mut ffi::sqlite3, sql: &str) -> PyResult<()> {
         let statement = std::ffi::CString::new(sql)
@@ -374,6 +404,7 @@ mod _core {
 
     /// The body of `execute_many`, wrapped in a savepoint by the caller.
     fn apply_all(
+        py: Python<'_>,
         stmt: *mut ffi::sqlite3_stmt,
         db: *mut ffi::sqlite3,
         reader: Box<dyn arrow_array::RecordBatchReader + Send>,
@@ -381,14 +412,25 @@ mod _core {
     ) -> PyResult<i64> {
         let mut changed = 0i64;
         let mut seen = 0usize;
+        let handles = (Handle(stmt), Handle(db));
         for batch in reader {
+            // Each batch is pulled with the GIL held: the reader is the
+            // caller's stream, and a producer is free to implement its
+            // capsule by calling back into Python. Only the binding and
+            // stepping below is pure SQLite, so only that is detached.
             let batch = batch.map_err(|e| PyValueError::new_err(e.to_string()))?;
             let columns = castable(&batch)?;
-            for row in 0..batch.num_rows() {
-                apply_row(stmt, db, &columns, order, row, seen + row)?;
-                changed += i64::from(unsafe { ffi::sqlite3_changes(db) });
-            }
-            seen += batch.num_rows();
+            let rows = batch.num_rows();
+            changed += py.detach(move || {
+                let (stmt, db) = (handles.0.get(), handles.1.get());
+                let mut delta = 0i64;
+                for row in 0..rows {
+                    apply_row(stmt, db, &columns, order, row, seen + row)?;
+                    delta += i64::from(unsafe { ffi::sqlite3_changes(db) });
+                }
+                Ok::<i64, PyErr>(delta)
+            })?;
+            seen += rows;
         }
         Ok(changed)
     }
@@ -398,7 +440,12 @@ mod _core {
     /// SAVEPOINT rather than BEGIN: it nests inside a transaction the caller
     /// already opened and starts one itself when there is none, so either way
     /// a failure part-way through leaves nothing behind.
-    fn run_many(db: *mut ffi::sqlite3, sql: &str, data: AnyRecordBatch) -> PyResult<i64> {
+    fn run_many(
+        py: Python<'_>,
+        db: *mut ffi::sqlite3,
+        sql: &str,
+        data: AnyRecordBatch,
+    ) -> PyResult<i64> {
         let reader = data.into_reader()?;
         let columns: Vec<String> = reader
             .schema()
@@ -428,7 +475,7 @@ mod _core {
         };
         let outcome = parameters(stmt, &columns).and_then(|order| {
             exec(db, open)?;
-            let applied = apply_all(stmt, db, reader, &order);
+            let applied = apply_all(py, stmt, db, reader, &order);
             if applied.is_err() {
                 let _ = exec(db, undo);
                 // ROLLBACK TO leaves the savepoint standing, so it still needs
@@ -452,13 +499,17 @@ mod _core {
     /// underneath, so its rows could not go through `read_row`. Its own
     /// per-row API costs about 40% more on a large fetch: two mutex-taking
     /// `sqlite3_column_*` calls per cell where `read_row` makes one.
-    fn run_query(db: *mut ffi::sqlite3, sql: &str) -> PyResult<Columns> {
-        let Some(stmt) = prepare(db, sql)? else {
-            return Ok(Columns { builders: Vec::new(), names: Vec::new() });
-        };
-        let rows = collect_rows(stmt);
-        unsafe { ffi::sqlite3_finalize(stmt) };
-        rows
+    fn run_query(py: Python<'_>, db: *mut ffi::sqlite3, sql: &str) -> PyResult<Columns> {
+        let handle = Handle(db);
+        py.detach(move || {
+            let db = handle.get();
+            let Some(stmt) = prepare(db, sql)? else {
+                return Ok(Columns { builders: Vec::new(), names: Vec::new() });
+            };
+            let rows = scan_columns(stmt);
+            unsafe { ffi::sqlite3_finalize(stmt) };
+            rows
+        })
     }
 
     /// `None` for SQL that holds no statement at all -- empty, or only a
@@ -523,7 +574,16 @@ mod _core {
     /// Step an already-prepared statement to exhaustion and decode its rows.
     /// Never finalizes: a cursor's statement belongs to the cursor, and
     /// `run_query` finalizes its own.
-    fn collect_rows(stmt: *mut ffi::sqlite3_stmt) -> PyResult<Columns> {
+    fn collect_rows(py: Python<'_>, stmt: *mut ffi::sqlite3_stmt) -> PyResult<Columns> {
+        let handle = Handle(stmt);
+        py.detach(move || scan_columns(handle.get()))
+    }
+
+    /// `collect_rows` with the GIL already released.
+    ///
+    /// Touches nothing but SQLite and Arrow builders, so it holds no Python
+    /// state; the errors it returns are built lazily and need no interpreter.
+    fn scan_columns(stmt: *mut ffi::sqlite3_stmt) -> PyResult<Columns> {
         let ncols = unsafe { ffi::sqlite3_column_count(stmt) };
         let names: Vec<String> = (0..ncols)
             .map(|i| unsafe {
