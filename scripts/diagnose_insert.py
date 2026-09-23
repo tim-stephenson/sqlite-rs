@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 ROWS = 2_000_000
+REPEATS = 3
 PRAGMAS = ("journal_mode", "synchronous", "page_size", "cache_size", "locking_mode")
 
 
@@ -130,16 +131,29 @@ MODES: dict[str, Callable[[Path, Any], None]] = {
 }
 
 
+def build_options() -> str:
+    """Return the bundled SQLite's compile options bearing on write speed."""
+    import sqlite_rs.sqlite3  # noqa: PLC0415
+
+    keys = ("THREADSAFE", "DEFAULT_WAL", "AUTOCHECKPOINT", "OMIT", "WIN32", "MEMSTATUS")
+    with contextlib.closing(sqlite_rs.sqlite3.connect(":memory:")) as conn:
+        rows = conn.execute("PRAGMA compile_options").fetchall()
+    return " ".join(sorted(r[0] for r in rows if any(k in r[0] for k in keys)))
+
+
 def main() -> None:
-    print(f"platform {sys.platform}, {ROWS:,} rows")
+    print(f"platform {sys.platform}, {ROWS:,} rows, {REPEATS} repeats")
+    print(f"bundled SQLite: {build_options()}")
     table = source_table(ROWS)
     for mode, run in MODES.items():
-        with tempfile.TemporaryDirectory() as scratch:
-            db = prepared(Path(scratch) / f"{mode}.db")
-            with contextlib.closing(sqlite3.connect(db)) as check:
-                given = check.execute("PRAGMA journal_mode").fetchone()[0]
-            print(f"\n  fixture handed to {mode}: journal_mode={given}")
-            run(db, table)
+        for attempt in range(REPEATS):
+            with tempfile.TemporaryDirectory() as scratch:
+                db = prepared(Path(scratch) / f"{mode}.db")
+                with contextlib.closing(sqlite3.connect(db)) as check:
+                    given = check.execute("PRAGMA journal_mode").fetchone()[0]
+                label = f"[{attempt + 1}/{REPEATS}] {mode}"
+                print(f"\n  {label}: fixture journal_mode={given}")
+                run(db, table)
 
 
 if __name__ == "__main__":
