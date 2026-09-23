@@ -89,11 +89,17 @@ def insert_via_sqlite_rs(db: Path, data: Any) -> int:  # noqa: ANN401
     import sqlite_rs.sqlite3  # noqa: PLC0415
 
     conn = sqlite_rs.sqlite3.connect(str(db))
-    _ = conn.execute(SYNCHRONOUS)
-    _ = conn.execute(SCHEMA)
-    inserted = sqlite_rs.execute_many(conn, INSERT, data)
-    conn.commit()
-    return inserted
+    try:
+        _ = conn.execute(SYNCHRONOUS)
+        _ = conn.execute(SCHEMA)
+        inserted = sqlite_rs.execute_many(conn, INSERT, data)
+        conn.commit()
+        return inserted
+    finally:
+        # Closed on the clock, as ADBC's context manager already is, and
+        # because Windows will not let the scratch directory go while the
+        # database file is still open.
+        conn.close()
 
 
 def insert_via_adbc(db: Path, data: Any) -> int:  # noqa: ANN401
@@ -114,11 +120,14 @@ def insert_via_stdlib(db: Path, data: Any) -> int:  # noqa: ANN401
 
     rows = cast("list[tuple[object, ...]]", data)
     conn = sqlite3.connect(db)
-    _ = conn.execute(SYNCHRONOUS)
-    _ = conn.execute(SCHEMA)
-    _ = conn.executemany(INSERT, rows)
-    conn.commit()
-    return len(rows)
+    try:
+        _ = conn.execute(SYNCHRONOUS)
+        _ = conn.execute(SCHEMA)
+        _ = conn.executemany(INSERT, rows)
+        conn.commit()
+        return len(rows)
+    finally:
+        conn.close()
 
 
 INSERTERS: dict[str, Callable[[Path, Any], int]] = {
