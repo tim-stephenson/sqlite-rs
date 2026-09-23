@@ -166,7 +166,9 @@ def build(db: Path, rows: int) -> None:
         db.unlink()
     conn = sqlite3.connect(db)
     # Durability is irrelevant for a throwaway fixture and dominates the build.
-    _ = conn.execute("PRAGMA journal_mode = OFF")
+    # journal_mode is fetched because the pragma returns a row and does not
+    # take effect until the statement is stepped to completion.
+    _ = conn.execute("PRAGMA journal_mode = OFF").fetchall()
     _ = conn.execute("PRAGMA synchronous = OFF")
     _ = conn.execute(SCHEMA)
 

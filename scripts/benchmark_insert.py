@@ -79,9 +79,12 @@ def prepared(db: Path) -> Path:
     """Put `db` in WAL before any mode opens it."""
     import sqlite3  # noqa: PLC0415
 
-    conn = sqlite3.connect(db)
-    _ = conn.execute(JOURNAL)
-    conn.close()
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        # Fetched, not just executed: a journal_mode pragma returns a row, and
+        # the mode does not change until the statement is stepped to
+        # completion. Leaving it unfetched leaves the database in its old mode
+        # and still locked -- which silently benchmarked delete mode for WAL.
+        _ = conn.execute(JOURNAL).fetchall()
     return db
 
 
