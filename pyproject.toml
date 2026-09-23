@@ -147,7 +147,7 @@ executionEnvironments = [
     # behind a sys.platform guard, for peak RSS. Whether an ignore comment on
     # that line is redundant depends on where the check runs, so that rule goes
     # too. Nothing here is imported by the package.
-    { root = "scripts", reportUnknownMemberType = false, reportUnknownArgumentType = false, reportUnknownVariableType = false, reportAny = false, reportAttributeAccessIssue = false, reportUnnecessaryTypeIgnoreComment = false },
+    { root = "scripts", reportUnknownMemberType = false, reportUnknownArgumentType = false, reportUnknownVariableType = false, reportAny = false, reportAttributeAccessIssue = false, reportUnnecessaryTypeIgnoreComment = false, reportExplicitAny = false, reportMissingTypeStubs = false },
 ]
 exclude = [
     "**/node_modules", 

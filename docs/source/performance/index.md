@@ -39,6 +39,28 @@ Read those down a column, not across. A runner's absolute speed moves by up to
 2x between runs — the same code has measured 1.57s and 2.87s on Windows — so
 only the three modes within one run are comparable, having shared a machine.
 
+## Inserting
+
+`scripts/benchmark_insert.py` is the other direction: the same rows written
+into a fresh database by `execute_many`, by ADBC's own bulk ingest, and by
+stdlib `executemany`. Two million rows, four columns, on one machine:
+
+| | seconds | rows/s | peak RSS |
+| --- | --- | --- | --- |
+| `sqlite_rs` | 0.56 | 3,589,707 | 0.40 GB |
+| `adbc` | 0.58 | 3,428,369 | 0.44 GB |
+| stdlib `executemany` | 0.84 | 2,394,719 | 1.22 GB |
+
+A much narrower win than reading, and worth being plain about: writing is
+dominated by SQLite's own work -- the B-tree, the journal, the page cache --
+not by getting values out of Arrow and into parameters. Turning a row into
+Python objects, which is most of what makes the read comparison lopsided, is a
+far smaller share of an insert. What does carry over is the memory: stdlib
+needs every row as a tuple of Python objects before it can start.
+
+stdlib is again given the shape it wants -- a list of tuples, built before the
+clock starts -- so it is not charged for a conversion it would really pay.
+
 ## Where the time goes
 
 Every mode starts warm: the database is read once before any of them run, their

@@ -65,7 +65,8 @@ the same way.
 | lint | `uv run ruff check . && uv run ruff format --check .` |
 | types | `uv run basedpyright . --warnings` |
 | docs | `uv run sphinx-autobuild docs/source docs/build` |
-| bench | `uv run python scripts/benchmark_fetch_all.py` |
+| bench (read) | `uv run python scripts/benchmark_fetch_all.py` |
+| bench (insert) | `uv run python scripts/benchmark_insert.py` |
 | clangd | `bear -- cargo build` |
 | vendor SQLite | `uv run python scripts/vendor_sqlite.py [VERSION]` |
 | vendor CPython's `sqlite3` | `uv run python scripts/vendor_cpython.py [VERSION ...]` |
