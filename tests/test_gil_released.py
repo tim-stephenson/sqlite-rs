@@ -19,7 +19,7 @@ import contextlib
 import sqlite3
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, final
 
 import pytest
 import sqlite_rs
@@ -39,6 +39,7 @@ BASELINE_SECONDS = 0.3
 SHARE = 0.4
 
 
+@final
 class Spinner:
     """A thread that counts as fast as the interpreter will let it."""
 
@@ -54,7 +55,7 @@ class Spinner:
     def rate_while(self, work: Callable[[], object]) -> float:
         """Ticks per second achieved while `work` runs."""
         before, started = self.ticks, time.perf_counter()
-        work()
+        _ = work()
         elapsed = time.perf_counter() - started
         return (self.ticks - before) / elapsed
 
