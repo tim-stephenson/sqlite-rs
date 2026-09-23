@@ -323,7 +323,12 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test --group arrow
+          uv pip install --system --group test
+          # pyarrow trails new Python versions and skips some platforms
+          # outright. The tests needing it skip when it is missing, so failing
+          # to install it is not a failed job -- just less covered.
+          uv pip install --system --group arrow \
+            || echo "::warning::pyarrow unavailable here; its tests will skip"
           pytest tests/
 
   test-linux-aarch64:
@@ -346,7 +351,12 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test --group arrow
+          uv pip install --system --group test
+          # pyarrow trails new Python versions and skips some platforms
+          # outright. The tests needing it skip when it is missing, so failing
+          # to install it is not a failed job -- just less covered.
+          uv pip install --system --group arrow \
+            || echo "::warning::pyarrow unavailable here; its tests will skip"
           pytest tests/
 
   test-macos:
@@ -372,7 +382,12 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test --group arrow
+          uv pip install --system --group test
+          # pyarrow trails new Python versions and skips some platforms
+          # outright. The tests needing it skip when it is missing, so failing
+          # to install it is not a failed job -- just less covered.
+          uv pip install --system --group arrow \
+            || echo "::warning::pyarrow unavailable here; its tests will skip"
           pytest tests/
 
   test-windows-x64:
@@ -396,7 +411,12 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test --group arrow
+          uv pip install --system --group test
+          # pyarrow trails new Python versions and skips some platforms
+          # outright. The tests needing it skip when it is missing, so failing
+          # to install it is not a failed job -- just less covered.
+          uv pip install --system --group arrow \
+            || echo "::warning::pyarrow unavailable here; its tests will skip"
           pytest tests/
 
   # `docker run` from a step, not the job-level `container:` key: that injects
@@ -456,6 +476,11 @@ jobs:
       - run: |
           uv pip install --system --find-links dist sqlite-rs
           uv pip install --system --group test
+          # pyarrow trails new Python versions and skips some platforms
+          # outright. The tests needing it skip when it is missing, so failing
+          # to install it is not a failed job -- just less covered.
+          uv pip install --system --group arrow \
+            || echo "::warning::pyarrow unavailable here; its tests will skip"
           pytest tests/
 
   test-windows-arm64:
@@ -479,7 +504,12 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test --group arrow
+          uv pip install --system --group test
+          # pyarrow trails new Python versions and skips some platforms
+          # outright. The tests needing it skip when it is missing, so failing
+          # to install it is not a failed job -- just less covered.
+          uv pip install --system --group arrow \
+            || echo "::warning::pyarrow unavailable here; its tests will skip"
           pytest tests/
 
   test-musllinux-aarch64:
