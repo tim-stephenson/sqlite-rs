@@ -326,17 +326,30 @@ mod _core {
     }
 
     /// Run one statement without reading anything back, for savepoints.
-    fn exec(db: *mut ffi::sqlite3, sql: &str) -> PyResult<()> {
+    fn exec(py: Python<'_>, db: *mut ffi::sqlite3, sql: &str) -> PyResult<()> {
         let statement = std::ffi::CString::new(sql)
             .map_err(|_| PyValueError::new_err("sql contains a NUL byte"))?;
-        let rc = unsafe {
-            ffi::sqlite3_exec(db, statement.as_ptr(), None, std::ptr::null_mut(), std::ptr::null_mut())
-        };
-        if rc == ffi::SQLITE_OK {
-            Ok(())
-        } else {
-            Err(db_err(db, "sqlite3_exec", rc))
-        }
+        let handle = Handle(db);
+        // Detached like the row loops: COMMIT is where a WAL write-back
+        // happens, which on a large insert is the single longest stretch of
+        // the call and has no business holding the interpreter.
+        py.detach(move || {
+            let db = handle.get();
+            let rc = unsafe {
+                ffi::sqlite3_exec(
+                    db,
+                    statement.as_ptr(),
+                    None,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            };
+            if rc == ffi::SQLITE_OK {
+                Ok(())
+            } else {
+                Err(db_err(db, "sqlite3_exec", rc))
+            }
+        })
     }
 
     /// Bind one row and run the statement once.
@@ -474,18 +487,18 @@ mod _core {
             ("BEGIN", "ROLLBACK", "COMMIT")
         };
         let outcome = parameters(stmt, &columns).and_then(|order| {
-            exec(db, open)?;
+            exec(py, db, open)?;
             let applied = apply_all(py, stmt, db, reader, &order);
             if applied.is_err() {
-                let _ = exec(db, undo);
+                let _ = exec(py, db, undo);
                 // ROLLBACK TO leaves the savepoint standing, so it still needs
                 // popping; a plain ROLLBACK has already ended the transaction.
                 if nested {
-                    let _ = exec(db, close);
+                    let _ = exec(py, db, close);
                 }
                 return applied;
             }
-            exec(db, close)?;
+            exec(py, db, close)?;
             applied
         });
         unsafe { ffi::sqlite3_finalize(stmt) };
