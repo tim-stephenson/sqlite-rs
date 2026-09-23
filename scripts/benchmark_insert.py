@@ -114,7 +114,13 @@ def insert_via_adbc(db: Path, data: Any) -> int:  # noqa: ANN401
         _ = cursor.execute(SYNCHRONOUS)
         conn.adbc_connection.set_autocommit(False)
         # The driver's own bulk path: it takes Arrow directly, as we do.
-        return cursor.adbc_ingest("t", data, mode="create")
+        inserted = cursor.adbc_ingest("t", data, mode="create")
+        # Committed explicitly. Autocommit is off for the ingest, and closing
+        # the connection discards an open transaction rather than committing
+        # it, so without this the rows never land and the benchmark times work
+        # that is thrown away -- which it did, flattering ADBC throughout.
+        conn.commit()
+        return inserted
 
 
 def insert_via_stdlib(db: Path, data: Any) -> int:  # noqa: ANN401
@@ -141,6 +147,23 @@ IMPORTS = {
 }
 
 
+def verify(db: Path, mode: str, claimed: int) -> None:
+    """Fail unless the rows a mode claims to have inserted actually landed.
+
+    A mode that leaves its transaction open is timed for work the database
+    then throws away. ADBC did exactly that -- it reported two million rows
+    and left no table behind -- so the count is checked from a fresh
+    connection rather than taken on trust.
+    """
+    import sqlite3  # noqa: PLC0415
+
+    with contextlib.closing(sqlite3.connect(db)) as conn:
+        landed = cast("int", conn.execute("SELECT count(*) FROM t").fetchone()[0])
+    if landed != claimed:
+        msg = f"{mode} claimed {claimed:,} rows but {landed:,} are in the database"
+        raise RuntimeError(msg)
+
+
 def run_child(mode: str, rows: int) -> None:
     """Time one mode in this process and report it as JSON on stdout."""
     for module in IMPORTS[mode]:
@@ -163,6 +186,7 @@ def run_child(mode: str, rows: int) -> None:
         started = time.perf_counter()
         inserted = insert(bench, data)
         seconds = time.perf_counter() - started
+        verify(bench, mode, inserted)
 
     result = Result(
         mode=mode, seconds=seconds, rows=inserted, peak_rss=peak_rss_bytes()
