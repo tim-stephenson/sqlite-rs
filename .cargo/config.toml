@@ -14,7 +14,14 @@
 # build.rs has created what they point at.
 #
 # https://github.com/rusqlite/rusqlite/tree/master/libsqlite3-sys
+# The oldest macOS these wheels support. rustc would otherwise default to
+# 11.0 on arm64 and 10.12 on x86_64, two floors nobody chose. force, because
+# maturin puts its own default in the environment and a plain value loses to
+# it; CI's macos job sets the same so the wheel tag matches the binary.
+#
+# https://doc.rust-lang.org/cargo/reference/config.html#env
 [env]
+MACOSX_DEPLOYMENT_TARGET = { value = "12.0", force = true }
 SQLITE3_LIB_DIR = { value = "target/sqlite3-link", relative = true }
 SQLITE3_INCLUDE_DIR = { value = "vendor/sqlite", relative = true }
 PKG_CONFIG_LIBDIR = { value = "target/sqlite3-link/no-pkg-config", relative = true }

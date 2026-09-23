@@ -39,7 +39,7 @@ exported over the Arrow PyCapsule interface, which polars, pyarrow and duckdb
 all read natively.
 
 Supported on CPython 3.11–3.15, including free-threaded 3.15t, for Linux
-(glibc and musl), macOS and Windows.
+(glibc and musl), macOS 12 and later, and Windows.
 
 ```{toctree}
 :maxdepth: 2
