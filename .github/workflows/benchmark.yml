@@ -5,11 +5,15 @@ on:
   workflow_dispatch:
     inputs:
       rows:
-        description: Rows in the fixture
+        description: Rows in the read fixture
         default: "10000000"
+      insert_rows:
+        description: Rows in the insert fixture
+        default: "2000000"
 
-# One interpreter: the numbers are about the fetch path, which does not vary
-# by version, and building the fixture for each would be minutes apiece.
+# One interpreter: the numbers are about the read and insert paths, neither of
+# which varies by version, and building the fixture for each would be minutes
+# apiece.
 env:
   PYTHON_VERSION: "3.14"
 
@@ -28,16 +32,28 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: uv sync --group bench
       - run: uv run maturin develop --uv --release
-      - id: run
+      - id: read
         shell: bash
         run: |
           set -euo pipefail
-          uv run python scripts/benchmark_fetch_all.py --rows "${{ inputs.rows }}" | tee result.txt
+          uv run python scripts/benchmark_fetch_all.py --rows "${{ inputs.rows }}" | tee read.txt
+      # Separately, because the insert fixture is built in memory and the read
+      # fixture is on disk: running them in one process would peak at the sum.
+      - id: insert
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/benchmark_insert.py --rows "${{ inputs.insert_rows }}" | tee insert.txt
       - shell: bash
         run: |
           {
             echo "### ${{ matrix.runner }} -- ${{ runner.arch }}, Python ${{ env.PYTHON_VERSION }}"
+            echo "#### Query -- ${{ inputs.rows }} rows"
             echo '```'
-            cat result.txt
+            cat read.txt
+            echo '```'
+            echo "#### Insert -- ${{ inputs.insert_rows }} rows"
+            echo '```'
+            cat insert.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
