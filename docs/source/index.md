@@ -30,7 +30,8 @@ re-reading, no serialising between them:
 
 - **`sqlite_rs.sqlite3`** — the clone of CPython's `sqlite3`. Open connections
   and run statements exactly as you do today.
-- **`sqlite_rs`** — the Rust extension, reading those connections into Arrow.
+- **`sqlite_rs`** — the Rust extension, reading those connections into Arrow
+  and writing Arrow back into them.
 - **`sqlite_rs.LIBSQLITE3_PATH`** — the library itself, for a `ctypes` caller
   that wants to drive the same connection directly.
 
