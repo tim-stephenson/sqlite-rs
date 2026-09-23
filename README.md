@@ -17,23 +17,20 @@ Query: 10,000,000 rows, four columns, one `SELECT *`.
 
 | | sqlite_rs | adbc | stdlib `sqlite3` |
 | --- | --- | --- | --- |
-| macOS, arm64 | **3.77s** / 2,654,184 rows/s / 0.64 GB | 9.69s / 1,032,200 rows/s / 1.36 GB | 21.94s / 455,860 rows/s / 2.74 GB |
-| Linux, x86-64 | **1.79s** / 5,592,085 rows/s / 0.81 GB | 4.34s / 2,302,589 rows/s / 1.73 GB | 9.01s / 1,109,456 rows/s / 2.76 GB |
-| Windows, x86-64 | **2.42s** / 4,125,213 rows/s / 0.80 GB | 3.54s / 2,824,285 rows/s / 1.49 GB | 9.49s / 1,053,537 rows/s / 2.81 GB |
+| macOS, arm64 | **2.21s** / 4,520,187 rows/s / 0.68 GB | 5.64s / 1,773,072 rows/s / 1.12 GB | 15.10s / 662,372 rows/s / 2.74 GB |
+| Linux, x86-64 | **1.89s** / 5,281,716 rows/s / 0.81 GB | 4.15s / 2,412,059 rows/s / 1.75 GB | 8.00s / 1,249,572 rows/s / 2.76 GB |
+| Windows, x86-64 | **3.14s** / 3,182,268 rows/s / 0.80 GB | 3.65s / 2,737,264 rows/s / 1.49 GB | 9.43s / 1,060,959 rows/s / 2.81 GB |
 
 Insert: 2,000,000 rows, four columns, under `journal_mode = WAL` and
-`synchronous = NORMAL`. Timed from connect to close, so each mode is charged
-for its own commit and checkpoint.
+`synchronous = NORMAL`. Timed from connect to close, so every mode is charged
+for its own commit, and each one's rows are counted back out of the database
+afterwards so that nothing is credited for work it did not keep.
 
 | | sqlite_rs | adbc | stdlib `sqlite3` |
 | --- | --- | --- | --- |
-| macOS, arm64 | 1.33s / 1,505,093 rows/s / 0.40 GB | **1.30s** / 1,538,710 rows/s / 0.45 GB | 2.36s / 847,610 rows/s / 1.32 GB |
-| Linux, x86-64 | 1.32s / 1,516,108 rows/s / 0.42 GB | **1.20s** / 1,670,887 rows/s / 0.47 GB | 1.85s / 1,079,033 rows/s / 1.30 GB |
-| Windows, x86-64 | 3.51s / 569,525 rows/s / 0.36 GB | **1.70s** / 1,178,428 rows/s / 0.39 GB | 4.89s / 408,871 rows/s / 1.20 GB |
-
-Reads are where the Arrow path pays off. Inserts are a closer thing: ADBC edges
-it on every platform, and on Windows it is twice as quick, which is not yet
-understood.
+| macOS, arm64 | **1.29s** / 1,545,490 rows/s / 0.40 GB | 1.65s / 1,209,644 rows/s / 0.45 GB | 2.21s / 903,370 rows/s / 1.32 GB |
+| Linux, x86-64 | **1.43s** / 1,394,698 rows/s / 0.42 GB | 1.49s / 1,342,732 rows/s / 0.47 GB | 1.93s / 1,038,702 rows/s / 1.30 GB |
+| Windows, x86-64 | **3.15s** / 635,307 rows/s / 0.35 GB | 3.59s / 557,014 rows/s / 0.39 GB | 4.40s / 454,816 rows/s / 1.20 GB |
 
 ## Opinionated Installation Choices
 
