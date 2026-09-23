@@ -83,6 +83,12 @@ fn build_libsqlite3(sqlite_dir: &Path, out_dir: &Path) -> PathBuf {
         .include(sqlite_dir)
         .pic(true)
         .warnings(false)
+        // Multi-thread rather than SQLite's serialized default: threads may
+        // share the module but not a single connection. Serialized mode takes
+        // the db mutex on every sqlite3_bind_*/sqlite3_step, which profiling
+        // put at ~15% of both the read and the insert path. The visible effect
+        // is sqlite3.threadsafety == 1 instead of 3; see the README.
+        .define("SQLITE_THREADSAFE", Some("2"))
         .define("SQLITE_ENABLE_FTS5", None)
         .define("SQLITE_ENABLE_RTREE", None)
         .define("SQLITE_ENABLE_COLUMN_METADATA", None)
