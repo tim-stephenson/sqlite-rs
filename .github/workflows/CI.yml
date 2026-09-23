@@ -323,7 +323,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test
+          uv pip install --system --group test --group arrow
           pytest tests/
 
   test-linux-aarch64:
@@ -346,7 +346,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test
+          uv pip install --system --group test --group arrow
           pytest tests/
 
   test-macos:
@@ -372,7 +372,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test
+          uv pip install --system --group test --group arrow
           pytest tests/
 
   test-windows-x64:
@@ -396,7 +396,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test
+          uv pip install --system --group test --group arrow
           pytest tests/
 
   # `docker run` from a step, not the job-level `container:` key: that injects
@@ -479,7 +479,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: |
           uv pip install --system --find-links dist sqlite-rs
-          uv pip install --system --group test
+          uv pip install --system --group test --group arrow
           pytest tests/
 
   test-musllinux-aarch64:

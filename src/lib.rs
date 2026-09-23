@@ -258,7 +258,7 @@ mod _core {
         if order.is_empty() {
             if count != columns.len() {
                 return Err(PyValueError::new_err(format!(
-                    "statement takes {count} parameters but {} columns were given",
+                    "statement parameters ({count}) and columns ({}) do not match",
                     columns.len()
                 )));
             }

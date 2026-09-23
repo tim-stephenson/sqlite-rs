@@ -45,6 +45,12 @@ test = [
 # Benchmarking only, and deliberately its own group: CI never installs it, so a
 # package without wheels for every supported interpreter cannot gate the test
 # matrix the way pyarrow once did.
+# Building the more exotic Arrow types to insert needs something that can make
+# them. pyarrow has no wheels for win32 or i686, so the tests that use it skip
+# where it is missing rather than fail -- hence its own group, not `test`.
+arrow = [
+    "pyarrow",
+]
 bench = [
     "polars",
     # ADBC's SQLite driver is the near neighbour: it returns Arrow too, from
