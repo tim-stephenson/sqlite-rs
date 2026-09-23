@@ -13,19 +13,34 @@ performant Arrow interoperability.
 
 ## Performance
 
-Query:
+Query: 10,000,000 rows, four columns, one `SELECT *`.
 
 | | sqlite_rs | adbc | stdlib `sqlite3` |
 | --- | --- | --- | --- |
-| macOS, arm64 | **3.07s** / 3,258,469 rows/s / 0.60 GB | 6.50s / 1,538,843 rows/s / 1.43 GB | 22.79s / 438,798 rows/s / 2.74 GB |
-| Linux, x86-64 | **1.89s** / 5,295,657 rows/s / 0.81 GB | 4.07s / 2,458,792 rows/s / 1.73 GB | 7.87s / 1,270,543 rows/s / 2.76 GB |
-| Windows, x86-64 | **2.51s** / 3,988,030 rows/s / 0.80 GB | 3.61s / 2,768,326 rows/s / 1.49 GB | 9.47s / 1,055,892 rows/s / 2.81 GB |
+| macOS, arm64 | **3.77s** / 2,654,184 rows/s / 0.64 GB | 9.69s / 1,032,200 rows/s / 1.36 GB | 21.94s / 455,860 rows/s / 2.74 GB |
+| Linux, x86-64 | **1.79s** / 5,592,085 rows/s / 0.81 GB | 4.34s / 2,302,589 rows/s / 1.73 GB | 9.01s / 1,109,456 rows/s / 2.76 GB |
+| Windows, x86-64 | **2.42s** / 4,125,213 rows/s / 0.80 GB | 3.54s / 2,824,285 rows/s / 1.49 GB | 9.49s / 1,053,537 rows/s / 2.81 GB |
+
+Insert: 2,000,000 rows, four columns, under `journal_mode = WAL` and
+`synchronous = NORMAL`. Timed from connect to close, so each mode is charged
+for its own commit and checkpoint.
+
+| | sqlite_rs | adbc | stdlib `sqlite3` |
+| --- | --- | --- | --- |
+| macOS, arm64 | 1.33s / 1,505,093 rows/s / 0.40 GB | **1.30s** / 1,538,710 rows/s / 0.45 GB | 2.36s / 847,610 rows/s / 1.32 GB |
+| Linux, x86-64 | 1.32s / 1,516,108 rows/s / 0.42 GB | **1.20s** / 1,670,887 rows/s / 0.47 GB | 1.85s / 1,079,033 rows/s / 1.30 GB |
+| Windows, x86-64 | 3.51s / 569,525 rows/s / 0.36 GB | **1.70s** / 1,178,428 rows/s / 0.39 GB | 4.89s / 408,871 rows/s / 1.20 GB |
+
+Reads are where the Arrow path pays off. Inserts are a closer thing: ADBC edges
+it on every platform, and on Windows it is twice as quick, which is not yet
+understood.
 
 ## Opinionated Installation Choices
 
 - `sqlite_rs` bundles a vendored dynamically linkable SQLite library. (`libsqlite_rs_sqlite3.so`, `libsqlite_rs_sqlite3.dylib`, or `libsqlite_rs_sqlite3.dll`)
 - `sqlite_rs` bundles a vendored cpython `sqlite3` module (matching the python version) which dynamically links to the bundled SQLite library.
 - `sqlite_rs` bundles functions with native performance and Arrow interoperability which dynamically links to the bundled SQLite library, utilizing the known struct offsets from the vendored `sqlite3` (e.g. `sqlite_rs.sqlite3`) to extract the relevant SQLite references.
+- `sqlite_rs` builds that SQLite in multi-thread rather than serialized mode, which is worth roughly 15% on queries and 12% on inserts. Threads may share the module but not a single connection, so `sqlite_rs.sqlite3.threadsafety` is `1` where the standard library reports `3`, and a connection must not be handed between threads even with `check_same_thread=False`.
 
 ## Quick Start
 
