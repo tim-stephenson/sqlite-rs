@@ -412,14 +412,33 @@ mod _core {
         let Some(stmt) = prepare(db, sql)? else {
             return Ok(0);
         };
+        // A savepoint only when the caller already has a transaction open,
+        // where BEGIN would fail; otherwise a plain transaction, which spares
+        // SQLite the bookkeeping that keeping a savepoint rollback-able costs
+        // on every row.
+        let nested = unsafe { ffi::sqlite3_get_autocommit(db) } == 0;
+        let (open, undo, close) = if nested {
+            (
+                "SAVEPOINT sqlite_rs_execute_many",
+                "ROLLBACK TO sqlite_rs_execute_many",
+                "RELEASE sqlite_rs_execute_many",
+            )
+        } else {
+            ("BEGIN", "ROLLBACK", "COMMIT")
+        };
         let outcome = parameters(stmt, &columns).and_then(|order| {
-            exec(db, "SAVEPOINT sqlite_rs_execute_many")?;
+            exec(db, open)?;
             let applied = apply_all(stmt, db, reader, &order);
             if applied.is_err() {
-                // ROLLBACK TO leaves the savepoint standing; RELEASE pops it.
-                let _ = exec(db, "ROLLBACK TO sqlite_rs_execute_many");
+                let _ = exec(db, undo);
+                // ROLLBACK TO leaves the savepoint standing, so it still needs
+                // popping; a plain ROLLBACK has already ended the transaction.
+                if nested {
+                    let _ = exec(db, close);
+                }
+                return applied;
             }
-            exec(db, "RELEASE sqlite_rs_execute_many")?;
+            exec(db, close)?;
             applied
         });
         unsafe { ffi::sqlite3_finalize(stmt) };
