@@ -38,6 +38,7 @@ afterwards so that nothing is credited for work it did not keep.
 - `sqlite_rs` bundles a vendored cpython `sqlite3` module (matching the python version) which dynamically links to the bundled SQLite library.
 - `sqlite_rs` bundles functions with native performance and Arrow interoperability which dynamically links to the bundled SQLite library, utilizing the known struct offsets from the vendored `sqlite3` (e.g. `sqlite_rs.sqlite3`) to extract the relevant SQLite references.
 - `sqlite_rs` builds that SQLite in multi-thread rather than serialized mode, which is worth roughly 15% on queries and 12% on inserts. Threads may share the module but not a single connection, so `sqlite_rs.sqlite3.threadsafety` is `1` where the standard library reports `3`, and a connection must not be handed between threads even with `check_same_thread=False`.
+- `sqlite_rs`'s native calls release the interpreter lock for the parts that only touch SQLite and Arrow -- decoding rows, binding them, and the commit -- so a long query or insert does not stall other Python threads.
 
 ## Quick Start
 

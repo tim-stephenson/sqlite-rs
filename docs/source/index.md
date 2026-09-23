@@ -39,6 +39,18 @@ Nothing here requires an Arrow package to be installed. The columns are
 exported over the Arrow PyCapsule interface, which polars, pyarrow and duckdb
 all read natively.
 
+## Threading
+
+The bundled SQLite is built multi-thread rather than serialized, which is worth
+roughly 15% on queries and 12% on inserts. The cost is that
+`sqlite_rs.sqlite3.threadsafety` reports `1` where the standard library reports
+`3`: threads may share the module, but one connection must not be used from
+more than one of them, not even with `check_same_thread=False`.
+
+In exchange the Rust calls hand the interpreter lock back for everything that
+only touches SQLite and Arrow — decoding rows, binding them, and the commit —
+so a long query or insert does not stall the rest of the process while it runs.
+
 Supported on CPython 3.11–3.15, including free-threaded 3.15t, for Linux
 (glibc and musl), macOS 12 and later, and Windows.
 
