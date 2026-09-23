@@ -7,6 +7,7 @@
 /// the bundled `libsqlite_rs_sqlite3` built by build.rs -- see
 /// .cargo/config.toml for how that name is forced past libsqlite3-sys's
 /// hardcoded `sqlite3`.
+mod bind;
 mod columns;
 
 mod shim {
@@ -31,9 +32,11 @@ mod shim {
 #[pyo3::pymodule]
 mod _core {
     use super::shim;
+    use super::bind;
     use super::columns::{Cell, ColumnBuilder};
     use pyo3::exceptions::{PyTypeError, PyValueError};
     use pyo3::prelude::*;
+    use pyo3_arrow::input::AnyRecordBatch;
     use pyo3_arrow::{PyArray, PyTable};
     use arrow_array::RecordBatch;
     use arrow_schema::Schema;
@@ -72,6 +75,40 @@ mod _core {
     #[pyfunction]
     fn execute_and_fetch_table(connection: Bound<'_, PyAny>, sql: &str) -> PyResult<PyTable> {
         run_query(connection_db(&connection)?, sql)?.into_table()
+    }
+
+    /// Run `sql` once per row of `data`, binding each row's values to its
+    /// parameters. The Arrow counterpart of `executemany`.
+    ///
+    /// `data` is anything exporting a table over the Arrow PyCapsule
+    /// interface -- a polars `DataFrame`, a pyarrow `Table` or `RecordBatch`,
+    /// or what `fetch_table` returns. Returns the total number of rows the
+    /// statement changed, which for an `UPDATE` or an upsert is not
+    /// necessarily the number of rows given.
+    ///
+    /// Parameters are matched by position for `?` and by name for `:name`,
+    /// whichever the statement uses; see `parameters`. Everything runs inside
+    /// one savepoint, so a failure part-way leaves the database as it was,
+    /// whether or not a transaction was already open.
+    ///
+    /// Raises `TypeError` for a connection that is not
+    /// `sqlite_rs.sqlite3`'s, or a column whose type has no place in SQLite.
+    /// Raises `ValueError` for a closed connection, a SQL error, SQL holding
+    /// more than one statement, or columns that do not line up with the
+    /// statement's parameters.
+    #[pyfunction]
+    fn execute_many(connection: Bound<'_, PyAny>, sql: &str, data: AnyRecordBatch) -> PyResult<i64> {
+        run_many(connection_db(&connection)?, sql, data)
+    }
+
+    /// `execute_many` against a `sqlite3*` the caller already holds.
+    #[pyfunction]
+    fn execute_many_via_raw_pointer(
+        db_ptr: Bound<'_, PyAny>,
+        sql: &str,
+        data: AnyRecordBatch,
+    ) -> PyResult<i64> {
+        run_many(raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql, data)
     }
 
     /// Return the `sqlite3*` backing `connection` as a `ctypes.c_void_p`.
@@ -179,6 +216,214 @@ mod _core {
         // place would abort the interpreter on the cursor's next use.
         unsafe { shim::sqlite_rs_cursor_release_stmt(cursor.as_ptr()) };
         columns
+    }
+
+    /// How a statement's parameters line up with the columns given for them.
+    enum Parameters {
+        /// `?` -- parameter *i* takes column *i*.
+        Positional,
+        /// `:name` -- parameter *i* takes the column this names.
+        Named(Vec<usize>),
+    }
+
+    /// Work out which, by asking the statement.
+    ///
+    /// SQLite reports a name for `:a` and nothing for `?`, so the SQL says
+    /// which kind it is and nobody has to pass a flag. A statement mixing the
+    /// two is refused rather than guessed at.
+    ///
+    /// Positional wants exactly as many columns as parameters. Named wants a
+    /// column for every parameter and does not mind columns it has no
+    /// parameter for -- naming what it wants is the point of naming.
+    fn parameters(stmt: *mut ffi::sqlite3_stmt, columns: &[String]) -> PyResult<Parameters> {
+        let count = unsafe { ffi::sqlite3_bind_parameter_count(stmt) } as usize;
+        let mut order = Vec::with_capacity(count);
+        for i in 1..=count {
+            let name = unsafe { ffi::sqlite3_bind_parameter_name(stmt, c_int::try_from(i).unwrap_or(0)) };
+            if name.is_null() {
+                continue;
+            }
+            let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy().into_owned();
+            // The leading ':', '@' or '$' is syntax, not part of the name.
+            let bare = name.get(1..).unwrap_or_default();
+            let Some(column) = columns.iter().position(|c| c == bare) else {
+                let given = columns.join(", ");
+                return Err(PyValueError::new_err(format!(
+                    "parameter {name} has no column to bind: given [{given}]"
+                )));
+            };
+            order.push(column);
+        }
+
+        if order.is_empty() {
+            if count != columns.len() {
+                return Err(PyValueError::new_err(format!(
+                    "statement takes {count} parameters but {} columns were given",
+                    columns.len()
+                )));
+            }
+            return Ok(Parameters::Positional);
+        }
+        if order.len() != count {
+            return Err(PyValueError::new_err(
+                "statement mixes named and positional parameters",
+            ));
+        }
+        Ok(Parameters::Named(order))
+    }
+
+    /// Cast every column to the storage class it binds as, once, refusing any
+    /// whose type has nowhere to go.
+    fn castable(batch: &arrow_array::RecordBatch) -> PyResult<Vec<arrow_array::ArrayRef>> {
+        batch
+            .schema()
+            .fields()
+            .iter()
+            .zip(batch.columns())
+            .map(|(field, column)| {
+                let Some(target) = bind::target_type(column.data_type()) else {
+                    return Err(PyTypeError::new_err(format!(
+                        "column {:?} is {}, which has no SQLite storage class",
+                        field.name(),
+                        column.data_type()
+                    )));
+                };
+                arrow_cast::cast(column, &target).map_err(|e| {
+                    PyValueError::new_err(format!("column {:?}: {e}", field.name()))
+                })
+            })
+            .collect()
+    }
+
+    /// Run one statement without reading anything back, for savepoints.
+    fn exec(db: *mut ffi::sqlite3, sql: &str) -> PyResult<()> {
+        let statement = std::ffi::CString::new(sql)
+            .map_err(|_| PyValueError::new_err("sql contains a NUL byte"))?;
+        let rc = unsafe {
+            ffi::sqlite3_exec(db, statement.as_ptr(), None, std::ptr::null_mut(), std::ptr::null_mut())
+        };
+        if rc == ffi::SQLITE_OK {
+            Ok(())
+        } else {
+            Err(db_err(db, "sqlite3_exec", rc))
+        }
+    }
+
+    /// Bind one row and run the statement once.
+    fn apply_row(
+        stmt: *mut ffi::sqlite3_stmt,
+        db: *mut ffi::sqlite3,
+        columns: &[arrow_array::ArrayRef],
+        order: &Parameters,
+        row: usize,
+        at: usize,
+    ) -> PyResult<()> {
+        for position in 0..columns.len() {
+            let column = match order {
+                Parameters::Positional => &columns[position],
+                Parameters::Named(order) => match order.get(position) {
+                    Some(&index) => &columns[index],
+                    // More columns than parameters, which named binding allows.
+                    None => continue,
+                },
+            };
+            let parameter = c_int::try_from(position + 1).unwrap_or(0);
+            // SQLITE_STATIC: every array outlives the loop that binds from it,
+            // so SQLite can borrow rather than copy each value.
+            let rc = unsafe {
+                match bind::cell_at(column, row) {
+                    Cell::Null => ffi::sqlite3_bind_null(stmt, parameter),
+                    Cell::Int(v) => ffi::sqlite3_bind_int64(stmt, parameter, v),
+                    Cell::Real(v) => ffi::sqlite3_bind_double(stmt, parameter, v),
+                    Cell::Text(v) => ffi::sqlite3_bind_text64(
+                        stmt,
+                        parameter,
+                        v.as_ptr().cast(),
+                        v.len() as u64,
+                        ffi::SQLITE_STATIC(),
+                        ffi::SQLITE_UTF8 as u8,
+                    ),
+                    Cell::Blob(v) => ffi::sqlite3_bind_blob64(
+                        stmt,
+                        parameter,
+                        v.as_ptr().cast(),
+                        v.len() as u64,
+                        ffi::SQLITE_STATIC(),
+                    ),
+                }
+            };
+            if rc != ffi::SQLITE_OK {
+                return Err(row_err(db, "sqlite3_bind", rc, at));
+            }
+        }
+
+        let rc = unsafe { ffi::sqlite3_step(stmt) };
+        let stepped = match rc {
+            // A statement with a RETURNING clause hands back rows nobody asked
+            // for here; stepping to the end is all that is wanted.
+            ffi::SQLITE_ROW => {
+                while unsafe { ffi::sqlite3_step(stmt) } == ffi::SQLITE_ROW {}
+                Ok(())
+            }
+            ffi::SQLITE_DONE => Ok(()),
+            rc => Err(row_err(db, "sqlite3_step", rc, at)),
+        };
+        unsafe { ffi::sqlite3_reset(stmt) };
+        stepped
+    }
+
+    /// The body of `execute_many`, wrapped in a savepoint by the caller.
+    fn apply_all(
+        stmt: *mut ffi::sqlite3_stmt,
+        db: *mut ffi::sqlite3,
+        reader: Box<dyn arrow_array::RecordBatchReader + Send>,
+        order: &Parameters,
+    ) -> PyResult<i64> {
+        let mut changed = 0i64;
+        let mut seen = 0usize;
+        for batch in reader {
+            let batch = batch.map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let columns = castable(&batch)?;
+            for row in 0..batch.num_rows() {
+                apply_row(stmt, db, &columns, order, row, seen + row)?;
+                changed += i64::from(unsafe { ffi::sqlite3_changes(db) });
+            }
+            seen += batch.num_rows();
+        }
+        Ok(changed)
+    }
+
+    /// Prepare `sql`, then run it once per row of `data`.
+    ///
+    /// SAVEPOINT rather than BEGIN: it nests inside a transaction the caller
+    /// already opened and starts one itself when there is none, so either way
+    /// a failure part-way through leaves nothing behind.
+    fn run_many(db: *mut ffi::sqlite3, sql: &str, data: AnyRecordBatch) -> PyResult<i64> {
+        let reader = data.into_reader()?;
+        let columns: Vec<String> = reader
+            .schema()
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+
+        // Prepared before the savepoint: bad SQL should be an error even when
+        // there are no rows to run it against.
+        let Some(stmt) = prepare(db, sql)? else {
+            return Ok(0);
+        };
+        let outcome = parameters(stmt, &columns).and_then(|order| {
+            exec(db, "SAVEPOINT sqlite_rs_execute_many")?;
+            let applied = apply_all(stmt, db, reader, &order);
+            if applied.is_err() {
+                // ROLLBACK TO leaves the savepoint standing; RELEASE pops it.
+                let _ = exec(db, "ROLLBACK TO sqlite_rs_execute_many");
+            }
+            exec(db, "RELEASE sqlite_rs_execute_many")?;
+            applied
+        });
+        unsafe { ffi::sqlite3_finalize(stmt) };
+        outcome
     }
 
     /// Prepare `sql` against `db` and decode everything it returns.
@@ -397,6 +642,17 @@ mod _core {
         } else {
             unsafe { std::slice::from_raw_parts(ptr, len as usize) }
         }
+    }
+
+    /// `db_err`, saying which row of the input was being applied. Built here
+    /// rather than by wrapping, so the message does not carry an exception
+    /// name in the middle of it.
+    fn row_err(db: *mut ffi::sqlite3, call: &str, rc: c_int, row: usize) -> PyErr {
+        let msg = unsafe { std::ffi::CStr::from_ptr(ffi::sqlite3_errmsg(db)) };
+        PyValueError::new_err(format!(
+            "row {row}: {call} failed ({rc}): {}",
+            msg.to_string_lossy()
+        ))
     }
 
     fn db_err(db: *mut ffi::sqlite3, call: &str, rc: c_int) -> PyErr {

@@ -43,6 +43,12 @@ class ArrowStreamExportable(Protocol):
     @property
     def column_names(self) -> list[str]: ...
 
+# A table on its way *in*, which demands less than the one handed back: a
+# polars DataFrame exports the stream but has no num_rows or column_names, and
+# is a perfectly good thing to insert.
+class ArrowTableInput(Protocol):
+    def __arrow_c_stream__(self, requested_schema: object | None = None) -> object: ...
+
 # One array per result column, each as long as the number of rows. Docstrings
 # live on the functions themselves (PYI021): help() reads them from _core.
 def execute_and_fetch_all(
@@ -53,6 +59,14 @@ def execute_and_fetch_table(
     connection: sqlite_rs.sqlite3.Connection, sql: str
 ) -> ArrowStreamExportable: ...
 def fetch_table(cursor: sqlite_rs.sqlite3.Cursor) -> ArrowStreamExportable: ...
+def execute_many(
+    connection: sqlite_rs.sqlite3.Connection,
+    sql: str,
+    data: ArrowTableInput,
+) -> int: ...
+def execute_many_via_raw_pointer(
+    db_ptr: int | ctypes.c_void_p, sql: str, data: ArrowTableInput
+) -> int: ...
 def get_raw_db_ptr(connection: sqlite_rs.sqlite3.Connection) -> ctypes.c_void_p: ...
 def get_raw_stmt_ptr(cursor: sqlite_rs.sqlite3.Cursor) -> ctypes.c_void_p: ...
 def execute_and_fetch_all_via_raw_pointer(

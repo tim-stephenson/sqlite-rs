@@ -44,6 +44,8 @@ from sqlite_rs._core import (
     execute_and_fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     execute_and_fetch_table,  # pyright: ignore[reportUnknownVariableType]
     execute_and_fetch_table_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
+    execute_many,  # pyright: ignore[reportUnknownVariableType]
+    execute_many_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     fetch_all,  # pyright: ignore[reportUnknownVariableType]
     fetch_all_via_raw_pointer,  # pyright: ignore[reportUnknownVariableType]
     fetch_table,  # pyright: ignore[reportUnknownVariableType]
@@ -78,6 +80,8 @@ __all__ = [
     "execute_and_fetch_all_via_raw_pointer",
     "execute_and_fetch_table",
     "execute_and_fetch_table_via_raw_pointer",
+    "execute_many",
+    "execute_many_via_raw_pointer",
     "fetch_all",
     "fetch_all_via_raw_pointer",
     "fetch_table",
