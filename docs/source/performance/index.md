@@ -31,9 +31,9 @@ interpreter. Seconds and peak RSS:
 
 | | sqlite_rs | adbc | stdlib |
 | --- | --- | --- | --- |
-| windows-latest, x64 | 1.60 / 0.80 GB | 2.13 / 1.49 GB | 8.27 / 2.81 GB |
-| ubuntu-latest, x64 | 1.85 / 0.81 GB | 4.09 / 1.74 GB | 7.86 / 2.76 GB |
-| macos-latest, arm64 | 1.94 / 0.79 GB | 4.65 / 1.27 GB | 9.45 / 2.74 GB |
+| windows-latest, x64 | 2.51 / 0.80 GB | 3.61 / 1.49 GB | 9.47 / 2.81 GB |
+| ubuntu-latest, x64 | 1.89 / 0.81 GB | 4.07 / 1.73 GB | 7.87 / 2.76 GB |
+| macos-latest, arm64 | 3.07 / 0.60 GB | 6.50 / 1.43 GB | 22.79 / 2.74 GB |
 
 Read those down a column, not across. A runner's absolute speed moves by up to
 2x between runs — the same code has measured 1.57s and 2.87s on Windows — so

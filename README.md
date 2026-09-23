@@ -17,9 +17,9 @@ Query:
 
 | | sqlite_rs | adbc | stdlib `sqlite3` |
 | --- | --- | --- | --- |
-| macOS, arm64 | **1.94s** / 5,161,686 rows/s / 0.79 GB | 4.65s / 2,151,119 rows/s / 1.27 GB | 9.45s / 1,057,731 rows/s / 2.74 GB |
-| Linux, x86-64 | **1.85s** / 5,403,427 rows/s / 0.81 GB | 4.09s / 2,446,516 rows/s / 1.74 GB | 7.86s / 1,271,890 rows/s / 2.76 GB |
-| Windows, x86-64 | **1.60s** / 6,267,934 rows/s / 0.80 GB | 2.13s / 4,702,584 rows/s / 1.49 GB | 8.27s / 1,208,718 rows/s / 2.81 GB |
+| macOS, arm64 | **3.07s** / 3,258,469 rows/s / 0.60 GB | 6.50s / 1,538,843 rows/s / 1.43 GB | 22.79s / 438,798 rows/s / 2.74 GB |
+| Linux, x86-64 | **1.89s** / 5,295,657 rows/s / 0.81 GB | 4.07s / 2,458,792 rows/s / 1.73 GB | 7.87s / 1,270,543 rows/s / 2.76 GB |
+| Windows, x86-64 | **2.51s** / 3,988,030 rows/s / 0.80 GB | 3.61s / 2,768,326 rows/s / 1.49 GB | 9.47s / 1,055,892 rows/s / 2.81 GB |
 
 ## Opinionated Installation Choices
 
