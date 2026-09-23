@@ -10,6 +10,10 @@ on:
       insert_rows:
         description: Rows in the insert fixture
         default: "2000000"
+      diagnose:
+        description: Also run the per-phase insert diagnostic
+        type: boolean
+        default: false
 
 # One interpreter: the numbers are about the read and insert paths, neither of
 # which varies by version, and building the fixture for each would be minutes
@@ -44,6 +48,12 @@ jobs:
         run: |
           set -euo pipefail
           uv run python scripts/benchmark_insert.py --rows "${{ inputs.insert_rows }}" | tee insert.txt
+      - id: diagnose
+        if: ${{ inputs.diagnose }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python scripts/diagnose_insert.py | tee diagnose.txt
       - shell: bash
         run: |
           {
@@ -56,4 +66,10 @@ jobs:
             echo '```'
             cat insert.txt
             echo '```'
+            if [ -f diagnose.txt ]; then
+              echo "#### Diagnostic"
+              echo '```'
+              cat diagnose.txt
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
