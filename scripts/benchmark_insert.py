@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Compare sqlite_rs.execute_many against ADBC's ingest and stdlib executemany.
 
-All three write the same rows into an equivalent table in a fresh database.
+All three write the same rows into an equivalent table in a fresh database,
+under WAL with synchronous=NORMAL, so what is measured is the three paths
+rather than three journal modes.
 sqlite_rs and ADBC are given the Arrow table directly; stdlib is given a list
 of Python tuples, built before the clock starts, because that is the shape it
 takes and converting for it is not what is being measured. That makes this, as
@@ -41,6 +43,13 @@ if TYPE_CHECKING:
     import pyarrow as pa
 
 SCHEMA = "CREATE TABLE t (i INTEGER, r REAL, s TEXT, b BLOB)"
+# Every mode writes under the same settings, or this measures journal modes
+# rather than the three paths. WAL keeps writers out of the rollback journal;
+# NORMAL stops fsyncing every commit, which is what WAL makes safe enough to
+# skip. The journal mode belongs to the file and is set once, before anyone
+# opens it; synchronous belongs to a connection, so each mode sets its own.
+JOURNAL = "PRAGMA journal_mode = WAL"
+SYNCHRONOUS = "PRAGMA synchronous = NORMAL"
 INSERT = "INSERT INTO t VALUES (?, ?, ?, ?)"
 WARMUP_ROWS = 20_000
 
@@ -65,11 +74,22 @@ def source_table(rows: int) -> Any:  # noqa: ANN401
     )
 
 
+def prepared(db: Path) -> Path:
+    """Put `db` in WAL before any mode opens it."""
+    import sqlite3  # noqa: PLC0415
+
+    conn = sqlite3.connect(db)
+    _ = conn.execute(JOURNAL)
+    conn.close()
+    return db
+
+
 def insert_via_sqlite_rs(db: Path, data: Any) -> int:  # noqa: ANN401
     import sqlite_rs  # noqa: PLC0415
     import sqlite_rs.sqlite3  # noqa: PLC0415
 
     conn = sqlite_rs.sqlite3.connect(str(db))
+    _ = conn.execute(SYNCHRONOUS)
     _ = conn.execute(SCHEMA)
     inserted = sqlite_rs.execute_many(conn, INSERT, data)
     conn.commit()
@@ -80,6 +100,11 @@ def insert_via_adbc(db: Path, data: Any) -> int:  # noqa: ANN401
     from adbc_driver_sqlite import dbapi as adbc  # noqa: PLC0415
 
     with adbc.connect(str(db)) as conn, conn.cursor() as cursor:
+        # SQLite will not change synchronous inside a transaction and ADBC
+        # opens one implicitly, so autocommit goes on for just the pragma.
+        conn.adbc_connection.set_autocommit(True)
+        _ = cursor.execute(SYNCHRONOUS)
+        conn.adbc_connection.set_autocommit(False)
         # The driver's own bulk path: it takes Arrow directly, as we do.
         return cursor.adbc_ingest("t", data, mode="create")
 
@@ -89,6 +114,7 @@ def insert_via_stdlib(db: Path, data: Any) -> int:  # noqa: ANN401
 
     rows = cast("list[tuple[object, ...]]", data)
     conn = sqlite3.connect(db)
+    _ = conn.execute(SYNCHRONOUS)
     _ = conn.execute(SCHEMA)
     _ = conn.executemany(INSERT, rows)
     conn.commit()
@@ -123,10 +149,11 @@ def run_child(mode: str, rows: int) -> None:
         # The same path on a slice of the same rows, before anything is timed.
         warm = cast("pa.Table", table).slice(0, WARMUP_ROWS)
         starter = data[:WARMUP_ROWS] if mode == "stdlib" else warm
-        _ = insert(Path(scratch) / "warm.db", starter)
+        _ = insert(prepared(Path(scratch) / "warm.db"), starter)
 
+        bench = prepared(Path(scratch) / "bench.db")
         started = time.perf_counter()
-        inserted = insert(Path(scratch) / "bench.db", data)
+        inserted = insert(bench, data)
         seconds = time.perf_counter() - started
 
     result = Result(

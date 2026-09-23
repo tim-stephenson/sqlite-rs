@@ -43,23 +43,29 @@ only the three modes within one run are comparable, having shared a machine.
 
 `scripts/benchmark_insert.py` is the other direction: the same rows written
 into a fresh database by `execute_many`, by ADBC's own bulk ingest, and by
-stdlib `executemany`. Two million rows, four columns, on one machine:
+stdlib `executemany`. Two million rows, four columns, every mode under
+`journal_mode = WAL` and `synchronous = NORMAL`, on one machine:
 
 | | seconds | rows/s | peak RSS |
 | --- | --- | --- | --- |
-| `sqlite_rs` | 0.56 | 3,589,707 | 0.40 GB |
-| `adbc` | 0.58 | 3,428,369 | 0.44 GB |
-| stdlib `executemany` | 0.84 | 2,394,719 | 1.22 GB |
+| `sqlite_rs` | 0.68 | 2,935,441 | 0.40 GB |
+| `adbc` | 0.61 | 3,253,769 | 0.44 GB |
+| stdlib `executemany` | 0.97 | 2,058,237 | 1.16 GB |
 
-A much narrower win than reading, and worth being plain about: writing is
-dominated by SQLite's own work -- the B-tree, the journal, the page cache --
-not by getting values out of Arrow and into parameters. Turning a row into
-Python objects, which is most of what makes the read comparison lopsided, is a
-far smaller share of an insert. What does carry over is the memory: stdlib
-needs every row as a tuple of Python objects before it can start.
+Not the lopsided margin reading gives, and worth being plain about: an insert
+is mostly SQLite's own work -- the B-tree, the WAL, the page cache -- where a
+read is mostly turning rows into Python objects, which is the part this skips.
+Against ADBC, which also binds from Arrow, there is nothing in it; ADBC is
+slightly ahead here. Against stdlib the win is about 1.4x, and the memory gap
+is the one that carries over: every row has to become a tuple of Python
+objects before `executemany` can start.
 
-stdlib is again given the shape it wants -- a list of tuples, built before the
-clock starts -- so it is not charged for a conversion it would really pay.
+Two things keep the comparison honest. The journal mode belongs to the file
+and is set before any mode opens it; `synchronous` belongs to a connection, so
+each mode sets its own -- otherwise this would measure journal modes rather
+than the three paths. And stdlib is given the shape it wants, a list of tuples
+built before the clock starts, so it is not charged for a conversion it would
+really pay.
 
 ## Where the time goes
 
