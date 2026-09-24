@@ -409,7 +409,12 @@ jobs:
           architecture: x64
           allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
-      - run: |
+      # bash, not the Windows default: the run body is written for it,
+      # and PowerShell hands uv the line-continuation backslash as an
+      # argument, which it reads as a project directory -- so the arrow
+      # group silently failed to install and its tests silently skipped.
+      - shell: bash
+        run: |
           uv pip install --system --find-links dist sqlite-rs
           uv pip install --system --group test
           # pyarrow and polars trail new Python versions and skip some platforms
@@ -473,7 +478,12 @@ jobs:
           architecture: x86
           allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
-      - run: |
+      # bash, not the Windows default: the run body is written for it,
+      # and PowerShell hands uv the line-continuation backslash as an
+      # argument, which it reads as a project directory -- so the arrow
+      # group silently failed to install and its tests silently skipped.
+      - shell: bash
+        run: |
           uv pip install --system --find-links dist sqlite-rs
           uv pip install --system --group test
           # pyarrow and polars trail new Python versions and skip some platforms
@@ -502,7 +512,12 @@ jobs:
           architecture: arm64
           allow-prereleases: true
       - uses: astral-sh/setup-uv@v7
-      - run: |
+      # bash, not the Windows default: the run body is written for it,
+      # and PowerShell hands uv the line-continuation backslash as an
+      # argument, which it reads as a project directory -- so the arrow
+      # group silently failed to install and its tests silently skipped.
+      - shell: bash
+        run: |
           uv pip install --system --find-links dist sqlite-rs
           uv pip install --system --group test
           # pyarrow and polars trail new Python versions and skip some platforms
