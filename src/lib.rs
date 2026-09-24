@@ -7,6 +7,7 @@
 /// the bundled `libsqlite_rs_sqlite3` built by build.rs -- see
 /// .cargo/config.toml for how that name is forced past libsqlite3-sys's
 /// hardcoded `sqlite3`.
+mod arrow_in;
 mod bind;
 mod columns;
 
@@ -31,11 +32,14 @@ mod shim {
 /// A Python module implemented in Rust.
 #[pyo3::pymodule]
 mod _core {
+    use super::arrow_in::RepairingReader;
     use super::shim;
     use super::bind;
     use super::columns::{Cell, ColumnBuilder};
     use pyo3::exceptions::{PyTypeError, PyValueError};
     use pyo3::prelude::*;
+    use arrow_array::ffi_stream::FFI_ArrowArrayStream;
+    use pyo3::types::PyCapsule;
     use pyo3_arrow::input::AnyRecordBatch;
     use pyo3_arrow::{PyArray, PyTable};
     use arrow_array::RecordBatch;
@@ -97,8 +101,8 @@ mod _core {
     /// more than one statement, or columns that do not line up with the
     /// statement's parameters.
     #[pyfunction]
-    fn execute_many(connection: Bound<'_, PyAny>, sql: &str, data: AnyRecordBatch) -> PyResult<i64> {
-        run_many(connection.py(), connection_db(&connection)?, sql, data)
+    fn execute_many(connection: Bound<'_, PyAny>, sql: &str, data: Bound<'_, PyAny>) -> PyResult<i64> {
+        run_many(connection.py(), connection_db(&connection)?, sql, &data)
     }
 
     /// `execute_many` against a `sqlite3*` the caller already holds.
@@ -106,9 +110,9 @@ mod _core {
     fn execute_many_via_raw_pointer(
         db_ptr: Bound<'_, PyAny>,
         sql: &str,
-        data: AnyRecordBatch,
+        data: Bound<'_, PyAny>,
     ) -> PyResult<i64> {
-        run_many(db_ptr.py(), raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql, data)
+        run_many(db_ptr.py(), raw_pointer(&db_ptr, "db_ptr")? as *mut ffi::sqlite3, sql, &data)
     }
 
     /// Return the `sqlite3*` backing `connection` as a `ctypes.c_void_p`.
@@ -448,6 +452,38 @@ mod _core {
         Ok(changed)
     }
 
+    /// A reader over whatever `data` offers itself as.
+    ///
+    /// Tables arrive over the C stream interface, which is read through
+    /// `RepairingReader` rather than pyo3_arrow so that a producer exporting
+    /// a null column with a buffer it should not have is still readable; see
+    /// that module. Anything else -- a single record batch, say -- is left to
+    /// pyo3_arrow, which has no stream to repair.
+    fn reader_for(
+        data: &Bound<'_, PyAny>,
+    ) -> PyResult<Box<dyn arrow_array::RecordBatchReader + Send>> {
+        if data.hasattr("__arrow_c_stream__")? {
+            let capsule = data.call_method0("__arrow_c_stream__")?;
+            let capsule = capsule.cast_into::<PyCapsule>().map_err(|_| {
+                PyTypeError::new_err("__arrow_c_stream__ did not return a PyCapsule")
+            })?;
+            // Checked against the name the interface gives this capsule, so a
+            // pointer to something else cannot be read as a stream.
+            let pointer = capsule
+                .pointer_checked(Some(c"arrow_array_stream"))?
+                .as_ptr()
+                .cast::<FFI_ArrowArrayStream>();
+            // Ownership moves here, as the interface requires: the capsule is
+            // left holding an empty stream so its own destructor releases
+            // nothing, and the reader releases what it took.
+            let stream = unsafe { std::ptr::replace(pointer, FFI_ArrowArrayStream::empty()) };
+            let reader = RepairingReader::try_new(stream)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            return Ok(Box::new(reader));
+        }
+        Ok(data.extract::<AnyRecordBatch>()?.into_reader()?)
+    }
+
     /// Prepare `sql`, then run it once per row of `data`.
     ///
     /// SAVEPOINT rather than BEGIN: it nests inside a transaction the caller
@@ -457,9 +493,9 @@ mod _core {
         py: Python<'_>,
         db: *mut ffi::sqlite3,
         sql: &str,
-        data: AnyRecordBatch,
+        data: &Bound<'_, PyAny>,
     ) -> PyResult<i64> {
-        let reader = data.into_reader()?;
+        let reader = reader_for(data)?;
         let columns: Vec<String> = reader
             .schema()
             .fields()

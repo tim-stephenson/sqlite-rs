@@ -46,9 +46,13 @@ test = [
 # package without wheels for every supported interpreter cannot gate the test
 # matrix the way pyarrow once did.
 # Building the more exotic Arrow types to insert needs something that can make
-# them. pyarrow has no wheels for win32 or i686, so the tests that use it skip
-# where it is missing rather than fail -- hence its own group, not `test`.
+# them, and polars is here as a second producer rather than a convenience: it
+# exports a null column with a buffer the C data interface says it should not
+# have, which is a shape pyarrow cannot be made to produce. Neither has wheels
+# for win32 or i686, so the tests that use them skip where they are missing
+# rather than fail -- hence their own group, not `test`.
 arrow = [
+    "polars",
     "pyarrow",
 ]
 bench = [
